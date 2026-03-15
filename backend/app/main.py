@@ -27,6 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+from app.api import topics
+app.include_router(topics.router, prefix="/api/topics", tags=["topics"])
+
 # TODO: Include routers when ready
 # from app.api import projects, scripts, materials, tasks
 # app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
