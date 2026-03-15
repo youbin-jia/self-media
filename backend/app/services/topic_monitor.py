@@ -11,50 +11,50 @@ class TopicMonitor:
     def __init__(self):
         self.mock_topics = [
             {
-                "id": "topic-1",
+                "id": "topic_1",
                 "title": "AI技术突破：GPT-5即将发布",
                 "source": "weibo",
-                "hot_score": 9875432,
+                "hot_score": 98,
                 "category": "科技",
-                "url": "https://weibo.com/topic/ai-gpt5",
-                "fetched_at": datetime.now().isoformat(),
+                "url": "https://weibo.com/hot/1",
+                "created_at": datetime.now().isoformat()
             },
             {
-                "id": "topic-2",
-                "title": "春节档电影票房破纪录",
-                "source": "douyin",
-                "hot_score": 8234567,
-                "category": "娱乐",
-                "url": "https://douyin.com/topic/spring-movies",
-                "fetched_at": datetime.now().isoformat(),
-            },
-            {
-                "id": "topic-3",
+                "id": "topic_2",
                 "title": "新能源汽车销量创新高",
-                "source": "toutiao",
-                "hot_score": 6543210,
-                "category": "汽车",
-                "url": "https://toutiao.com/topic/nev-sales",
-                "fetched_at": datetime.now().isoformat(),
-            },
-            {
-                "id": "topic-4",
-                "title": "国产游戏《黑神话：悟空》获国际大奖",
-                "source": "bilibili",
-                "hot_score": 5432109,
-                "category": "游戏",
-                "url": "https://bilibili.com/topic/black-myth",
-                "fetched_at": datetime.now().isoformat(),
-            },
-            {
-                "id": "topic-5",
-                "title": "春节消费市场回暖明显",
-                "source": "weibo",
-                "hot_score": 4321098,
+                "source": "zhihu",
+                "hot_score": 95,
                 "category": "财经",
-                "url": "https://weibo.com/topic/spring-consumption",
-                "fetched_at": datetime.now().isoformat(),
+                "url": "https://zhihu.com/hot/2",
+                "created_at": datetime.now().isoformat()
             },
+            {
+                "id": "topic_3",
+                "title": "全国两会重要议题解读",
+                "source": "baidu",
+                "hot_score": 92,
+                "category": "时政",
+                "url": "https://baidu.com/hot/3",
+                "created_at": datetime.now().isoformat()
+            },
+            {
+                "id": "topic_4",
+                "title": "教育改革新政策出台",
+                "source": "toutiao",
+                "hot_score": 88,
+                "category": "教育",
+                "url": "https://toutiao.com/hot/4",
+                "created_at": datetime.now().isoformat()
+            },
+            {
+                "id": "topic_5",
+                "title": "春季养生健康指南",
+                "source": "weibo",
+                "hot_score": 85,
+                "category": "健康",
+                "url": "https://weibo.com/hot/5",
+                "created_at": datetime.now().isoformat()
+            }
         ]
 
     async def fetch_topics(
@@ -93,7 +93,7 @@ class TopicMonitor:
             # Randomly adjust hot_score by -10% to +10%
             change = random.uniform(-0.1, 0.1)
             topic["hot_score"] = int(topic["hot_score"] * (1 + change))
-            topic["fetched_at"] = datetime.now().isoformat()
+            topic["created_at"] = datetime.now().isoformat()
 
         return {
             "status": "success",
