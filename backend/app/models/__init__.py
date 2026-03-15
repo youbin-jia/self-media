@@ -1,20 +1,14 @@
 # backend/app/models/__init__.py
-from app.models.project import Project, ProjectStatus
-from app.models.script import Script, ScriptStatus
-from app.models.material import Material, MaterialType
-from app.models.task import Task, TaskType, TaskStatus
-from app.models.quality_report import QualityReport, QualityReportStatus
+from app.models.project import Project
+from app.models.script import Script
+from app.models.material import Material
+from app.models.task import Task
+from app.models.quality_report import QualityReport
 
 __all__ = [
     "Project",
-    "ProjectStatus",
     "Script",
-    "ScriptStatus",
     "Material",
-    "MaterialType",
     "Task",
-    "TaskType",
-    "TaskStatus",
     "QualityReport",
-    "QualityReportStatus",
 ]

@@ -1,16 +1,8 @@
 # backend/app/models/script.py
 import uuid
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Enum
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, Boolean, JSON
 from sqlalchemy.sql import func
 from app.database import Base
-import enum
-
-
-class ScriptStatus(str, enum.Enum):
-    DRAFT = "draft"
-    APPROVED = "approved"
-    REJECTED = "rejected"
 
 
 class Script(Base):
@@ -18,14 +10,12 @@ class Script(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
-    content = Column(Text, nullable=False)
-    version = Column(String(50), default="1.0")
-    status = Column(Enum(ScriptStatus), default=ScriptStatus.DRAFT)
+    version = Column(Integer)
+    outline = Column(Text)
+    full_script = Column(Text)
+    segments = Column(JSON)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    project = relationship("Project", back_populates="scripts")
+    is_approved = Column(Boolean)
 
     def __repr__(self):
-        return f"<Script(id={self.id}, project_id={self.project_id}, status={self.status})>"
+        return f"<Script(id={self.id}, project_id={self.project_id})>"
