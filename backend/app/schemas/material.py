@@ -21,7 +21,7 @@ class MaterialResponse(MaterialBase):
     project_id: str
     source_url: Optional[str]
     local_path: Optional[str]
-    metadata: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     class Config:

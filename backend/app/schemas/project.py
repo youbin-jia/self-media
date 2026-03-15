@@ -31,7 +31,7 @@ class ProjectResponse(ProjectBase):
     topic_source: Optional[str]
     topic_title: Optional[str]
     topic_hot_score: Optional[int]
-    metadata: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
