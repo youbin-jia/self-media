@@ -15,7 +15,7 @@ class ScriptSegment(BaseModel):
 class ScriptBase(BaseModel):
     outline: Optional[str] = None
     full_script: Optional[str] = None
-    segments: List[ScriptSegment] = []
+    segments: Optional[List[ScriptSegment]] = None
 
 
 class ScriptCreate(ScriptBase):
