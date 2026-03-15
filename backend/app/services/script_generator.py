@@ -2,14 +2,16 @@
 """Script Generation Service"""
 from typing import List, Dict, Any
 from app.services.llm_provider import LLMProvider, get_llm_provider
+from app.services.quality_detector import QualityDetector, get_quality_detector
 from app.schemas.script import ScriptSegment
 
 
 class ScriptGenerator:
     """Service for generating video scripts"""
 
-    def __init__(self, llm_provider: LLMProvider = None):
+    def __init__(self, llm_provider: LLMProvider = None, quality_detector: QualityDetector = None):
         self.llm = llm_provider or get_llm_provider()
+        self.quality_detector = quality_detector or get_quality_detector()
 
     async def generate_outline(self, topic: str, style: str = "educational") -> str:
         """
@@ -48,7 +50,7 @@ class ScriptGenerator:
             topic: The video topic
 
         Returns:
-            Dictionary containing full_script text and segments list
+            Dictionary containing full_script text, segments list, and quality report
         """
         prompt = f"""你是一位专业的短视频脚本撰写师。请根据以下大纲创作完整的视频脚本。
 
@@ -72,9 +74,13 @@ class ScriptGenerator:
         # In production, this would parse the actual script into segments
         segments = self._create_segments(full_script)
 
+        # Detect script quality
+        quality_report = self.quality_detector.detect_script_quality(full_script, segments)
+
         return {
             "full_script": full_script,
-            "segments": segments
+            "segments": segments,
+            "quality_report": quality_report
         }
 
     def _create_segments(self, full_script: str) -> List[ScriptSegment]:
