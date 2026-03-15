@@ -38,10 +38,18 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "Video Automation API", "version": "0.1.0"}
+    return {
+        "message": "Video Automation API",
+        "version": "0.1.0",
+        "status": "running"
+    }
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "database": "connected",
+        "redis": "not_checked"
+    }
