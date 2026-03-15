@@ -1,8 +1,8 @@
 # 长视频自动化生产系统设计文档
 
 **日期**: 2026-03-16
-**版本**: 1.1
-**状态**: 已改进
+**版本**: 1.2
+**状态**: 最终版
 
 ---
 
@@ -762,9 +762,62 @@ CREATE TABLE configurations (
 );
 ```
 
+**quality_reports表**
+```sql
+CREATE TABLE quality_reports (
+    id VARCHAR(36) PRIMARY KEY,
+    project_id VARCHAR(36) REFERENCES projects(id),
+    report_type VARCHAR(50), -- script, material, audio, video, overall
+    overall_score DECIMAL(5,2),
+    grade VARCHAR(1), -- A, B, C, D, E
+    metrics JSON, -- 存储各项指标的详细评分
+    issues JSON, -- 存储发现的问题列表
+    recommendations JSON, -- 存储改进建议
+    created_at TIMESTAMP
+);
+```
+
 ---
 
 ### API接口设计
+
+**认证策略**
+
+本系统采用**API Key认证**机制（初期版本）：
+
+**认证方式**:
+- 每个用户分配唯一的API Key
+- 通过HTTP Header传递: `Authorization: Bearer <api_key>`
+- 服务端验证API Key的有效性和权限
+
+**实现示例**:
+```python
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    api_key = credentials.credentials
+    user = validate_api_key(api_key)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+    return user
+```
+
+**权限控制**:
+- Phase 1-3: 单用户模式，API Key用于基本认证
+- Phase 4: 多用户模式，支持角色权限管理（admin, editor, viewer）
+
+**API Key管理**:
+- Web界面生成和管理API Key
+- 支持重置和撤销
+- 访问日志记录
+
+---
 
 **热点相关**
 ```
@@ -997,6 +1050,290 @@ async def health_check():
 
 ---
 
+## 测试策略
+
+### 测试层级
+
+**1. 单元测试**
+- 覆盖范围: 核心业务逻辑、工具函数、数据处理
+- 框架: pytest
+- 目标覆盖率: ≥80%
+
+**关键测试点**:
+```python
+# 素材质量检测
+def test_material_quality_scoring():
+    material = create_test_material(resolution='720p', clarity_score=0.8)
+    score = calculate_quality_score(material)
+    assert score >= 0.6
+
+# 脚本生成
+def test_script_generation():
+    topic = create_test_topic()
+    script = generate_script(topic)
+    assert len(script.segments) > 0
+    assert script.word_count >= 500
+
+# 音频处理
+def test_audio_normalization():
+    audio = load_test_audio()
+    normalized = normalize_audio(audio)
+    assert abs(normalized.volume - target_volume) < 1.0
+```
+
+---
+
+**2. 集成测试**
+- 覆盖范围: 模块间交互、API端点、数据库操作
+- 重点: 视频合成管道、素材采集流程、任务队列
+
+**关键集成测试场景**:
+
+**视频合成管道测试**:
+```python
+def test_video_synthesis_pipeline():
+    # 准备测试数据
+    project = create_test_project()
+    script = create_test_script(project.id)
+    materials = create_test_materials(project.id, count=5)
+
+    # 执行视频合成
+    result = synthesize_video(project.id)
+
+    # 验证输出
+    assert os.path.exists(result.output_path)
+    assert result.duration > 0
+    assert result.quality_score >= 60
+```
+
+**素材采集流程测试**:
+```python
+def test_material_collection_with_fallback():
+    # 模拟素材源失败
+    mock_pexels_failure()
+    mock_pixabay_success()
+
+    # 执行采集
+    materials = collect_materials('test keyword')
+
+    # 验证降级策略
+    assert len(materials) > 0
+    assert all(m.source != 'pexels' for m in materials)
+```
+
+**任务队列测试**:
+```python
+def test_celery_task_retry():
+    # 模拟临时失败
+    with mock.patch('tasks.generate_script', side_effect=Exception('API Error')):
+        task = generate_script.delay(project_id)
+
+    # 验证重试机制
+    assert task.retry_count <= 3
+    assert task.status in ['RETRY', 'FAILURE']
+```
+
+---
+
+**3. 端到端测试 (E2E)**
+- 覆盖范围: 完整用户工作流
+- 工具: Playwright / Selenium
+- 频率: 每日自动运行
+
+**核心用户流程测试**:
+```python
+def test_complete_video_production_flow():
+    # 1. 访问首页
+    page.goto('/')
+    assert page.title() == 'Video Automation'
+
+    # 2. 选择热点
+    topics = page.query_selector_all('.topic-card')
+    assert len(topics) > 0
+    topics[0].click()
+
+    # 3. 确认选题
+    page.fill('#title', 'Test Video')
+    page.click('#confirm')
+
+    # 4. 审核脚本
+    page.wait_for_selector('.script-preview')
+    page.click('#approve-script')
+
+    # 5. 选择素材
+    materials = page.query_selector_all('.material-item')
+    for m in materials[:5]:
+        m.click()
+    page.click('#confirm-materials')
+
+    # 6. 生成预览
+    page.click('#generate-preview')
+    page.wait_for_selector('.video-preview', timeout=60000)
+
+    # 7. 导出视频
+    page.click('#export-video')
+    page.wait_for_selector('.download-link', timeout=300000)
+
+    # 验证导出文件
+    download_link = page.query_selector('.download-link')
+    assert download_link is not None
+```
+
+---
+
+**4. 性能测试**
+- 工具: Locust / Apache Bench
+- 目标: 支持并发处理10个项目
+
+**负载测试场景**:
+```python
+from locust import HttpUser, task, between
+
+class VideoProductionUser(HttpUser):
+    wait_time = between(1, 3)
+
+    @task
+    def create_project(self):
+        self.client.post("/api/projects", json={
+            "title": "Test Project",
+            "topic_id": "test_topic"
+        })
+
+    @task
+    def get_projects(self):
+        self.client.get("/api/projects")
+```
+
+**性能基准**:
+- API响应时间: P95 < 500ms
+- 视频合成: 5分钟视频 < 10分钟处理时间
+- 并发处理: 支持10个并发项目
+- 内存使用: 单个视频合成 < 2GB
+
+---
+
+**5. 质量检测测试**
+- 验证自动质量检测系统的准确性
+- 对比人工评估和自动评分
+
+**测试用例**:
+```python
+def test_script_quality_detection():
+    # 准备测试脚本
+    high_quality_script = create_script_from_template('excellent')
+    low_quality_script = create_script_from_template('poor')
+
+    # 执行质量检测
+    high_score = detect_script_quality(high_quality_script)
+    low_score = detect_script_quality(low_quality_script)
+
+    # 验证评分合理性
+    assert high_score >= 85
+    assert low_score < 60
+    assert high_score > low_score
+
+def test_video_quality_accuracy():
+    # 人工标注的视频质量
+    ground_truth = load_human_rated_videos()
+
+    # 自动评分
+    predictions = []
+    for video in ground_truth:
+        score = detect_video_quality(video)
+        predictions.append(score)
+
+    # 验证相关性
+    correlation = calculate_correlation(ground_truth, predictions)
+    assert correlation >= 0.7  # 相关性阈值
+```
+
+---
+
+### 测试数据管理
+
+**测试数据集**:
+- 样本脚本库: 100+不同风格的脚本
+- 测试素材库: 图片、视频、音频样本
+- Mock API响应: LLM、TTS、素材API的模拟响应
+
+**数据生成**:
+```python
+# 自动生成测试数据
+def generate_test_project():
+    return Project(
+        id=uuid.uuid4(),
+        title=f"Test Project {random.randint(1000, 9999)}",
+        topic_title=random.choice(TOPIC_SAMPLES),
+        created_at=datetime.now()
+    )
+```
+
+---
+
+### CI/CD集成
+
+**GitHub Actions配置**:
+```yaml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run unit tests
+        run: pytest tests/unit --cov=app --cov-report=xml
+
+      - name: Run integration tests
+        run: pytest tests/integration
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v2
+```
+
+---
+
+### 测试报告
+
+**自动生成报告**:
+- 测试覆盖率报告
+- 性能测试报告
+- 质量检测准确率报告
+
+**报告格式**:
+```json
+{
+  "test_run_id": "run_123",
+  "timestamp": "2026-03-16T10:00:00Z",
+  "summary": {
+    "total_tests": 150,
+    "passed": 148,
+    "failed": 2,
+    "coverage": "82%"
+  },
+  "performance": {
+    "avg_api_response": "245ms",
+    "video_synthesis_time": "8.5min"
+  }
+}
+```
+
+---
+
 ## 扩展性设计（Phase 4）
 
 以下扩展功能计划在Phase 4实现，为系统提供更强的可扩展性：
@@ -1118,40 +1455,127 @@ class CustomGLMProvider(LLMProvider):
 
 ## 开发路线图
 
+### 规划策略
+
+本项目采用**分阶段增量开发**策略，每个Phase作为独立的开发周期，完成后进行验收和测试，确保质量后再进入下一阶段。
+
+**实施计划策略**:
+- 每个Phase创建独立的实施计划文档，避免单一庞大计划
+- 每个Phase包含完整的开发、测试、文档工作
+- Phase间有明确的验收标准和交付物
+- 支持根据实际情况调整后续Phase的优先级
+
+**阶段依赖关系**:
+```
+Phase 1 (MVP) → Phase 2 (完善) → Phase 3 (高级特性) → Phase 4 (优化扩展)
+```
+
+---
+
 ### Phase 1: MVP核心功能 (2-3周)
-- [x] 项目基础设施
-- [ ] 热点监控模块
-- [ ] 脚本生成模块(单LLM)
-- [ ] 基础素材采集
-- [ ] 简单视频合成
-- [ ] 基础Web界面
-- [ ] 用户审核拒绝处理流程
-- [ ] 故障检查点恢复机制
+
+**目标**: 实现从选题到视频输出的完整最小可行产品
+
+**核心功能**:
+- [x] 项目基础设施（FastAPI后端 + React前端框架）
+- [ ] 热点监控模块（单一数据源）
+- [ ] 脚本生成模块（单LLM Provider）
+- [ ] 基础素材采集（免费素材库）
+- [ ] 简单视频合成（图片拼接 + 字幕）
+- [ ] 基础Web界面（选题、脚本审核、预览）
+- [ ] 用户审核拒绝处理流程（基础版）
+- [ ] 故障检查点恢复机制（视频合成）
+- [ ] **质量标准自动检测**（提前到Phase 1，便于验证MVP质量）
+
+**交付物**:
+- 可运行的本地Web应用
+- 能完成完整的视频生产流程
+- 自动生成质量报告
+- 基础测试覆盖（单元测试 + 集成测试）
+
+**验收标准**:
+- 能在30分钟内生成一条5分钟的测试视频
+- 视频质量评分达到C级以上
+- 核心功能测试覆盖率≥70%
+
+---
 
 ### Phase 2: 完善功能 (2-3周)
-- [ ] 多LLM Provider支持
-- [ ] AI配音集成
-- [ ] 素材管理优化
-- [ ] 视频编辑增强
-- [ ] 多平台导出
-- [ ] 素材采集边缘情况处理
-- [ ] 质量标准自动检测
+
+**目标**: 提升系统稳定性和用户体验
+
+**核心功能**:
+- [ ] 多LLM Provider支持（Claude、GPT-4、GLM-5）
+- [ ] AI配音集成（Azure Speech、ElevenLabs）
+- [ ] 素材管理优化（素材库、去重、标签）
+- [ ] 视频编辑增强（转场、特效、画中画）
+- [ ] 多平台导出（横屏 + 竖屏）
+- [ ] 素材采集边缘情况处理（完整降级策略）
+- [ ] **综合质量评分系统**（提前到Phase 2）
+
+**交付物**:
+- 多LLM Provider切换功能
+- 高质量AI配音
+- 多平台视频格式支持
+- 完善的错误处理和降级机制
+- 综合质量评分和改进建议
+
+**验收标准**:
+- 支持3种以上LLM Provider
+- 配音质量评分≥80分
+- 素材采集成功率≥90%
+- 多平台导出正常工作
+
+---
 
 ### Phase 3: 高级特性 (2-3周)
-- [ ] AI生成素材
-- [ ] AI生成音乐
-- [ ] 高级视频特效
-- [ ] 批量处理
-- [ ] 数据统计
-- [ ] 综合质量评分系统
+
+**目标**: 提升视频质量和生产效率
+
+**核心功能**:
+- [ ] AI生成素材（DALL-E 3、Midjourney集成）
+- [ ] AI生成音乐（Suno AI集成）
+- [ ] 高级视频特效（数据可视化、动态字幕）
+- [ ] 批量处理（多个项目并发）
+- [ ] 数据统计（制作效率、成本分析）
+
+**交付物**:
+- AI生成素材功能
+- AI音乐生成功能
+- 高级特效库
+- 批量处理能力
+- 数据统计看板
+
+**验收标准**:
+- AI生成素材可用率≥80%
+- 音乐生成与视频情绪匹配度≥85%
+- 支持同时处理5个项目
+
+---
 
 ### Phase 4: 优化与扩展 (持续)
-- [ ] 性能优化
-- [ ] 用户体验优化
+
+**目标**: 性能优化和生态扩展
+
+**核心功能**:
+- [ ] 性能优化（缓存、并发、渲染速度）
+- [ ] 用户体验优化（界面优化、快捷操作）
 - [ ] 插件系统（自定义素材源、LLM Provider）
-- [ ] Webhook通知集成
-- [ ] 移动端适配
-- [ ] 多用户支持
+- [ ] Webhook通知集成（第三方集成）
+- [ ] 移动端适配（响应式设计）
+- [ ] 多用户支持（用户管理、权限控制）
+
+**交付物**:
+- 性能优化报告和改进
+- 插件系统和示例插件
+- Webhook集成文档
+- 移动端友好界面
+- 多用户系统
+
+**验收标准**:
+- API响应时间P95 < 300ms
+- 视频合成速度提升30%
+- 插件系统可用性验证通过
 
 ---
 
