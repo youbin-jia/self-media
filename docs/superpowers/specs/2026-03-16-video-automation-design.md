@@ -1,8 +1,8 @@
 # 长视频自动化生产系统设计文档
 
 **日期**: 2026-03-16
-**版本**: 1.0
-**状态**: 待审批
+**版本**: 1.1
+**状态**: 已改进
 
 ---
 
@@ -129,6 +129,27 @@
 - 在线编辑
 - 一键重新生成
 
+**用户审核拒绝处理**
+
+当用户在脚本审核环节拒绝通过时，系统提供以下选项：
+
+**脚本大纲被拒绝:**
+- **重新生成**: 调整prompt参数（修改风格、调整角度、改变结构）重新生成
+- **手动编辑**: 用户直接在编辑器中修改大纲
+- **跳过大纲**: 直接进入详细脚本生成（不推荐）
+
+**详细脚本被拒绝:**
+- **重新生成指定段落**: 选择不满意的段落重新生成
+- **调整参数重新生成**: 修改风格、语气、详细程度等参数
+- **手动编辑**: 在线编辑器直接修改
+- **回退到大纲**: 重新调整大纲结构
+
+**交互界面实现:**
+- 拒绝按钮弹出选项菜单
+- 参数调整滑块/下拉框
+- 实时预览修改效果
+- 版本对比功能（对比修改前后）
+
 ---
 
 ### 3. 素材采集与管理模块
@@ -168,6 +189,54 @@
 - 预览功能
 - 手动选择/替换
 - 上传功能
+
+**边缘情况处理**
+
+**场景1: 无合适素材找到**
+- **降级策略**:
+  1. 扩大关键词范围（使用同义词、相关词）
+  2. 降低相似度阈值（从0.8降至0.6）
+  3. 使用通用素材（背景图、抽象图）
+  4. 使用纯文字动画代替
+- **用户通知**: 明确提示"未找到高质量素材，已使用备选方案"
+
+**场景2: 所有素材评分过低**
+- **质量阈值**:
+  - 最低可接受分数: 0.5（满分1.0）
+  - 分辨率: 图片≥720p，视频≥480p
+  - 清晰度: 自动检测模糊度
+- **处理流程**:
+  1. 标记低质量素材（黄色警告标签）
+  2. 优先使用AI生成素材替代
+  3. 提示用户上传高质量素材
+  4. 允许强制使用低质量素材（用户确认）
+
+**场景3: 素材下载失败**
+- **重试机制**:
+  - 自动重试3次（指数退避：1s, 2s, 4s）
+  - 切换CDN节点或备用URL
+- **降级方案**:
+  - 标记素材为不可用
+  - 从候选列表移除
+  - 使用列表中下一个候选素材
+- **失败率阈值**:
+  - 单个项目失败率>50%: 触发告警
+  - 连续多个项目失败率>30%: 检查素材源可用性
+
+**场景4: 素材版权风险**
+- **检测机制**:
+  - 水印检测（自动标记）
+  - 版权信息抓取（元数据）
+  - 新闻素材合理性评估
+- **处理策略**:
+  - 高风险素材: 自动过滤
+  - 中风险素材: 标记警告，用户可选
+  - 低风险素材: 正常使用，记录来源
+
+**素材库备选方案:**
+- 维护一组通用高质量素材（风景、城市、科技等）
+- AI生成占位符（根据场景快速生成）
+- 文字卡片模板（关键时刻使用）
 
 ---
 
@@ -339,6 +408,262 @@
 - 标签系统
 - 搜索功能
 - 版权管理
+
+---
+
+## 用户审核工作流总结
+
+本系统采用**半自动分步控制**模式，在关键节点设置用户审核环节：
+
+### 审核节点一览
+
+| 审核节点 | 审核内容 | 拒绝选项 | 影响范围 |
+|---------|---------|---------|---------|
+| 热点选题 | 选择合适的热点 | 浏览其他热点、手动输入选题 | 项目初始化 |
+| 脚本大纲 | 整体结构和方向 | 重新生成、手动编辑、调整参数 | 后续所有环节 |
+| 详细脚本 | 文案质量和准确性 | 重新生成段落、手动编辑、回退大纲 | 配音、字幕、素材选择 |
+| 素材选择 | 素材相关性和质量 | 替换素材、重新采集、上传素材 | 视频合成 |
+| 配音效果 | 配音质量和情感 | 重新生成、调整参数、真人配音 | 视频合成 |
+| 视频预览 | 整体效果 | 调整脚本、素材、配音、音乐 | 后期处理 |
+
+### 审核拒绝处理原则
+
+1. **可回退性**: 任何环节都可以回退到之前的步骤重新开始
+2. **版本保存**: 每次修改都保存新版本，可对比历史版本
+3. **参数可调**: 提供直观的参数调整界面
+4. **智能建议**: AI分析拒绝原因，给出改进建议
+5. **最小影响**: 优先局部调整，避免全盘重来
+
+### 审核界面设计
+
+**统一审核组件**:
+- 左侧: 待审核内容（脚本/素材/预览）
+- 右侧: 操作面板
+  - ✅ 通过按钮
+  - ❌ 拒绝按钮（展开选项菜单）
+  - 🔄 重新生成按钮
+  - ✏️ 手动编辑按钮
+  - 💾 保存草稿按钮
+- 底部: 修改历史时间轴
+
+---
+
+## 质量标准定义
+
+为确保"高质量"视频产出，制定以下可测量标准：
+
+### 脚本质量标准
+
+| 指标 | 标准值 | 检测方法 |
+|-----|--------|---------|
+| 原创度 | ≥80% | 文本查重检测 |
+| 信息密度 | 每分钟≥150字 | 字数统计 |
+| 逻辑连贯性 | 段落过渡自然 | AI评分（1-10分，≥7分） |
+| 观点明确性 | 有清晰立场 | AI评估（Yes/No） |
+| 事实准确性 | 无明显错误 | 基础事实核查 |
+| 情绪丰富度 | 包含≥3种情绪标签 | 情绪分析 |
+
+### 素材质量标准
+
+| 指标 | 最低标准 | 推荐标准 | 检测方法 |
+|-----|---------|---------|---------|
+| 分辨率（图片） | 720p | 1080p+ | 文件元数据 |
+| 分辨率（视频） | 480p | 720p+ | 文件元数据 |
+| 清晰度 | 无明显模糊 | 高清 | Laplacian方差检测 |
+| 相关度 | ≥0.5 | ≥0.7 | CLIP模型评分 |
+| 版权风险 | 低风险 | 无风险 | 版权检测API |
+| 时效性 | 近30天 | 近7天 | 发布时间 |
+
+### 配音质量标准
+
+| 指标 | 标准值 | 检测方法 |
+|-----|--------|---------|
+| 音量一致性 | 波动≤±3dB | 音频分析 |
+| 语速适中 | 120-180字/分钟 | 时长统计 |
+| 发音准确率 | ≥95% | 语音识别校验 |
+| 情感匹配度 | 情绪标签一致 | AI情感分析 |
+| 信噪比 | ≥30dB | 音频分析 |
+| 无爆音失真 | 是 | 波形检测 |
+
+### 视频质量标准
+
+| 指标 | 标准值 | 检测方法 |
+|-----|--------|---------|
+| 输出分辨率 | 1080p | 文件属性 |
+| 码率 | ≥5Mbps | FFmpeg检测 |
+| 帧率 | 30fps | FFmpeg检测 |
+| 音画同步 | 偏差≤100ms | FFmpeg检测 |
+| 字幕准确率 | 100% | 人工抽检 |
+| 字幕可读性 | 字号≥36px | 自动检测 |
+
+### 整体视频质量评分
+
+**综合评分公式**:
+```
+总分 = 脚本质量(30%) + 素材质量(25%) + 配音质量(20%) + 剪辑质量(15%) + 创意度(10%)
+```
+
+**质量等级**:
+- A级 (90-100分): 优秀，可直接发布
+- B级 (80-89分): 良好，建议小修后发布
+- C级 (70-79分): 合格，建议修改后发布
+- D级 (60-69分): 待改进，需要重大修改
+- E级 (<60分): 不合格，建议重新制作
+
+**自动质量检测**:
+- 每个项目完成后自动生成质量报告
+- 标注不达标的指标项
+- 提供改进建议
+
+---
+
+## 故障恢复与容错策略
+
+### 长时间任务故障恢复
+
+#### 视频合成任务
+
+**任务阶段划分**:
+1. 素材预处理（10%）
+2. 时间轴构建（20%）
+3. 视频片段合成（40%）
+4. 音频混合（10%）
+5. 字幕添加（10%）
+6. 渲染输出（10%）
+
+**故障恢复机制**:
+
+**方案A: 检查点恢复（推荐）**
+- 每个阶段完成时保存检查点
+- 记录已处理的数据和中间结果
+- 故障后从最近的检查点恢复
+- 实现示例:
+```python
+def synthesize_video(project_id):
+    checkpoint = load_checkpoint(project_id)
+    if checkpoint:
+        start_stage = checkpoint['stage']
+        resume_data = checkpoint['data']
+    else:
+        start_stage = 1
+
+    if start_stage <= 1:
+        materials = preprocess_materials()
+        save_checkpoint(project_id, stage=1, data=materials)
+
+    if start_stage <= 2:
+        timeline = build_timeline(materials)
+        save_checkpoint(project_id, stage=2, data=timeline)
+
+    # ... 继续后续阶段
+```
+
+**方案B: 幂等性设计**
+- 每个操作可重复执行
+- 检查是否已完成，避免重复工作
+- 实现示例:
+```python
+def process_material(material_id):
+    output_path = f"cache/{material_id}_processed.mp4"
+    if os.path.exists(output_path):
+        return output_path  # 已处理，直接返回
+
+    # 执行处理
+    result = ffmpeg_process(material_id)
+    return output_path
+```
+
+**故障处理流程**:
+1. **检测故障**: Celery任务失败捕获异常
+2. **分类错误**:
+   - 可恢复错误: 超时、网络问题、临时资源不足
+   - 不可恢复错误: 数据损坏、配置错误、代码bug
+3. **可恢复错误**:
+   - 等待5分钟后自动重试（最多3次）
+   - 从检查点恢复
+   - 通知用户进度
+4. **不可恢复错误**:
+   - 记录详细错误日志
+   - 标记项目状态为"error"
+   - 通知用户并提示可能的解决方案
+5. **用户选择**:
+   - 重试任务
+   - 回退到上一个审核节点
+   - 放弃项目
+
+#### 视频导出任务
+
+**多格式并行导出**:
+- 横屏和竖屏版本独立导出
+- 一个失败不影响另一个
+- 实现示例:
+```python
+@celery.task
+def export_video(project_id):
+    results = {}
+    tasks = [
+        export_horizontal.delay(project_id),
+        export_vertical.delay(project_id)
+    ]
+
+    for task in tasks:
+        try:
+            result = task.get(timeout=600)  # 10分钟超时
+            results[task.id] = result
+        except Exception as e:
+            results[task.id] = {'error': str(e)}
+
+    return results
+```
+
+**部分成功处理**:
+- 横屏成功、竖屏失败: 提供横屏版本，允许单独重导出竖屏
+- 两个都失败: 提供错误详情，允许重新导出
+
+### 数据库事务一致性
+
+**项目状态更新**:
+```python
+from sqlalchemy import transaction
+
+def update_project_step(project_id, new_step):
+    with transaction:
+        project = db.query(Project).get(project_id)
+        old_step = project.current_step
+        project.current_step = new_step
+        project.updated_at = datetime.now()
+        db.commit()
+
+        # 记录状态变更历史
+        history = ProjectHistory(
+            project_id=project_id,
+            from_step=old_step,
+            to_step=new_step,
+            timestamp=datetime.now()
+        )
+        db.add(history)
+        db.commit()
+```
+
+### 资源清理策略
+
+**临时文件清理**:
+- 定时任务: 每天凌晨2点清理超过7天的临时文件
+- 项目完成时: 保留最终输出，清理中间文件
+- 磁盘空间告警: 剩余空间<20%时触发清理
+
+**任务超时控制**:
+```python
+@celery.task(time_limit=3600)  # 1小时硬限制
+def long_running_task(project_id):
+    try:
+        # 任务执行
+        pass
+    except TimeLimitExceeded:
+        # 保存当前进度
+        save_checkpoint(project_id)
+        raise
+```
 
 ---
 
@@ -672,7 +997,9 @@ async def health_check():
 
 ---
 
-## 扩展性设计
+## 扩展性设计（Phase 4）
+
+以下扩展功能计划在Phase 4实现，为系统提供更强的可扩展性：
 
 ### 插件系统
 
@@ -681,20 +1008,111 @@ async def health_check():
 class MaterialSourcePlugin(ABC):
     @abstractmethod
     def search(self, keyword: str) -> List[Material]:
+        """搜索素材"""
         pass
+
+    @abstractmethod
+    def download(self, material_id: str) -> str:
+        """下载素材到本地"""
+        pass
+
+# 插件注册机制
+plugin_registry = {}
+
+def register_material_source(name: str, plugin: MaterialSourcePlugin):
+    """注册自定义素材源"""
+    plugin_registry[name] = plugin
+    # 更新配置，可在Web界面选择使用
 ```
 
 **自定义LLM Provider**
 ```python
 class LLMProvider(ABC):
     @abstractmethod
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, **kwargs) -> str:
+        """生成文本"""
         pass
+
+    @abstractmethod
+    def stream_generate(self, prompt: str, **kwargs):
+        """流式生成（实时输出）"""
+        pass
+
+# 用户可实现自己的Provider
+class CustomGLMProvider(LLMProvider):
+    def __init__(self, model_path: str):
+        self.model = load_local_model(model_path)
+
+    def generate(self, prompt: str, **kwargs) -> str:
+        return self.model.generate(prompt, **kwargs)
 ```
 
-**Webhook通知**
-- 视频完成通知
-- 自定义集成
+**插件管理界面**:
+- 查看已注册插件列表
+- 启用/禁用插件
+- 配置插件参数
+- 测试插件功能
+
+### Webhook通知
+
+**支持事件**:
+- 视频合成完成
+- 视频导出完成
+- 任务失败告警
+- 热点更新通知
+
+**配置示例**:
+```json
+{
+  "webhooks": [
+    {
+      "event": "video.export.completed",
+      "url": "https://your-server.com/webhook",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
+    }
+  ]
+}
+```
+
+**通知数据格式**:
+```json
+{
+  "event": "video.export.completed",
+  "project_id": "proj_123",
+  "timestamp": "2026-03-16T10:30:00Z",
+  "data": {
+    "horizontal_video": "/videos/proj_123_horizontal.mp4",
+    "vertical_video": "/videos/proj_123_vertical.mp4",
+    "duration": 320,
+    "quality_score": 85
+  }
+}
+```
+
+**重试策略**:
+- 失败后自动重试3次
+- 指数退避: 1s, 5s, 30s
+- 记录失败日志
+
+### 其他扩展方向
+
+**API开放平台**:
+- 提供完整的RESTful API
+- 支持第三方应用集成
+- API密钥管理和限流
+
+**模板市场**:
+- 用户可分享视频模板
+- 预设风格、转场、特效组合
+- 一键应用模板
+
+**协作功能**:
+- 多人协作编辑
+- 评论和批注
+- 版本对比和合并
 
 ---
 
@@ -707,6 +1125,8 @@ class LLMProvider(ABC):
 - [ ] 基础素材采集
 - [ ] 简单视频合成
 - [ ] 基础Web界面
+- [ ] 用户审核拒绝处理流程
+- [ ] 故障检查点恢复机制
 
 ### Phase 2: 完善功能 (2-3周)
 - [ ] 多LLM Provider支持
@@ -714,6 +1134,8 @@ class LLMProvider(ABC):
 - [ ] 素材管理优化
 - [ ] 视频编辑增强
 - [ ] 多平台导出
+- [ ] 素材采集边缘情况处理
+- [ ] 质量标准自动检测
 
 ### Phase 3: 高级特性 (2-3周)
 - [ ] AI生成素材
@@ -721,11 +1143,13 @@ class LLMProvider(ABC):
 - [ ] 高级视频特效
 - [ ] 批量处理
 - [ ] 数据统计
+- [ ] 综合质量评分系统
 
 ### Phase 4: 优化与扩展 (持续)
 - [ ] 性能优化
 - [ ] 用户体验优化
-- [ ] 插件系统
+- [ ] 插件系统（自定义素材源、LLM Provider）
+- [ ] Webhook通知集成
 - [ ] 移动端适配
 - [ ] 多用户支持
 
