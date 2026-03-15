@@ -24,8 +24,8 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(ProjectBase):
     id: str
-    status: str
-    current_step: str
+    status: str = "pending"
+    current_step: str = "topic_selection"
     created_at: datetime
     updated_at: Optional[datetime]
     topic_source: Optional[str]

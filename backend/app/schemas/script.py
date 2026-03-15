@@ -32,9 +32,9 @@ class ScriptUpdate(BaseModel):
 class ScriptResponse(ScriptBase):
     id: str
     project_id: str
-    version: int
+    version: int = 1
     created_at: datetime
-    is_approved: bool
+    is_approved: bool = False
 
     class Config:
         from_attributes = True
