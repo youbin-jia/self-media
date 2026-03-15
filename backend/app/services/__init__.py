@@ -5,6 +5,7 @@ from app.services.quality_detector import QualityDetector, get_quality_detector
 from app.services.script_generator import ScriptGenerator
 from app.services.topic_monitor import TopicMonitor
 from app.services.material_collector import MaterialCollector
+from app.services.video_synthesizer import VideoSynthesizer
 
 __all__ = [
     'LLMProvider',
@@ -14,4 +15,5 @@ __all__ = [
     'ScriptGenerator',
     'TopicMonitor',
     'MaterialCollector',
+    'VideoSynthesizer',
 ]
