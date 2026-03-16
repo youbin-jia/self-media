@@ -1,10 +1,14 @@
 # backend/app/services/ai_generation/dalle_provider.py
+import logging
+import uuid
 from openai import AsyncOpenAI
 from typing import Dict, Any, Optional, List
 import httpx
 from pathlib import Path
-import os
 from .base import AIGenerationProvider
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DALLEProvider(AIGenerationProvider):
@@ -31,6 +35,7 @@ class DALLEProvider(AIGenerationProvider):
         **kwargs
     ) -> Dict[str, Any]:
         """使用DALL-E 3生成图像"""
+        logger.info(f"Starting DALL-E image generation with prompt: {prompt[:50]}...")
 
         # 转换尺寸到DALL-E支持的格式
         dalle_size = self._map_size(size)
@@ -52,6 +57,8 @@ class DALLEProvider(AIGenerationProvider):
             # 下载图像
             image_path = await self._download_image(image_url)
 
+            logger.info(f"DALL-E image generation successful: {image_path}")
+
             return {
                 "success": True,
                 "image_path": image_path,
@@ -64,6 +71,7 @@ class DALLEProvider(AIGenerationProvider):
             }
 
         except Exception as e:
+            logger.error(f"DALL-E image generation failed: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
@@ -85,7 +93,11 @@ class DALLEProvider(AIGenerationProvider):
         }
 
     def _map_size(self, size: tuple) -> str:
-        """映射尺寸到DALL-E支持格式"""
+        """映射尺寸到DALL-E支持格式
+
+        Returns:
+            str: DALL-E supported size string (e.g., "1792x1024")
+        """
         width, height = size
         if width > height:
             return "1792x1024"  # Landscape
@@ -95,7 +107,11 @@ class DALLEProvider(AIGenerationProvider):
             return "1024x1024"  # Square
 
     def _enhance_prompt(self, prompt: str, style: str) -> str:
-        """增强提示词"""
+        """增强提示词
+
+        Returns:
+            str: Enhanced prompt with style keywords
+        """
         style_keywords = {
             "realistic": "photorealistic, highly detailed, professional photography",
             "artistic": "artistic, creative, stylized, illustration",
@@ -106,22 +122,36 @@ class DALLEProvider(AIGenerationProvider):
         return f"{prompt}, {keywords}" if keywords else prompt
 
     async def _download_image(self, url: str) -> str:
-        """下载生成的图像"""
-        # 创建保存目录
-        save_dir = Path("data/generated/images")
+        """下载生成的图像
+
+        Returns:
+            str: Local file path where image was saved
+
+        Raises:
+            httpx.HTTPError: If download fails
+            IOError: If saving file fails
+        """
+        # 创建保存目录 - use settings.DATA_DIR
+        save_dir = Path(settings.DATA_DIR) / "generated" / "images"
         save_dir.mkdir(parents=True, exist_ok=True)
 
         # 生成唯一文件名
-        import uuid
         filename = f"{uuid.uuid4()}.png"
         save_path = save_dir / filename
 
-        # 下载图像
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        # 下载图像 - with proper error handling
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url)
+                response.raise_for_status()
 
-            with open(save_path, "wb") as f:
-                f.write(response.content)
+                with open(save_path, "wb") as f:
+                    f.write(response.content)
 
-        return str(save_path)
+            return str(save_path)
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to download image from {url}: {str(e)}")
+            raise
+        except IOError as e:
+            logger.error(f"Failed to save image to {save_path}: {str(e)}")
+            raise

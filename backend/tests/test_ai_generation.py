@@ -1,5 +1,6 @@
 # backend/tests/test_ai_generation.py
 import pytest
+import httpx
 from unittest.mock import Mock, AsyncMock, patch
 from app.services.ai_generation.base import AIGenerationProvider
 from app.services.ai_generation.dalle_provider import DALLEProvider
@@ -114,6 +115,34 @@ class TestDALLEProvider:
             result = await provider.generate_image("Test", style="realistic", size=(1024, 1024))
             assert result["success"] is False
             assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_dalle_generate_image_download_error(self):
+        """测试下载错误处理"""
+        with patch('app.services.ai_generation.dalle_provider.AsyncOpenAI') as mock_client_class:
+            mock_instance = AsyncMock()
+            mock_client_class.return_value = mock_instance
+
+            # Mock the image generation response
+            mock_response = Mock()
+            mock_response.data = [Mock(url="https://example.com/image.png")]
+            mock_instance.images.generate = AsyncMock(return_value=mock_response)
+
+            # Mock the image download to fail
+            with patch('httpx.AsyncClient') as mock_async_client:
+                mock_async_client.return_value.__aenter__.return_value.get = AsyncMock(
+                    side_effect=httpx.HTTPError("Network error")
+                )
+
+                provider = DALLEProvider(api_key="test_key")
+                result = await provider.generate_image(
+                    "Test",
+                    style="realistic",
+                    size=(1024, 1024)
+                )
+
+                assert result["success"] is False
+                assert "error" in result
 
     def test_dalle_provider_name(self):
         """测试provider名称"""
