@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     PEXELS_API_KEY: Optional[str] = None
 
+    # Pixabay
+    PIXABAY_API_KEY: Optional[str] = None
+
+    # Unsplash
+    UNSPLASH_ACCESS_KEY: Optional[str] = None
+
     # GLM本地模型
     GLM_ENDPOINT: Optional[str] = None
 

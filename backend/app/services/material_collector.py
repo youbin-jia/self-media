@@ -4,12 +4,14 @@ import os
 import httpx
 import uuid
 import logging
+import random
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.utils.deduplication import MaterialDeduplicator
+from app.models.material import Material
 
 logger = logging.getLogger(__name__)
 
@@ -369,3 +371,331 @@ class MaterialCollector:
             self.db.commit()
 
         return collected
+
+    async def collect_materials(
+        self,
+        query: str,
+        project_id: int,
+        count: int = 10,
+        sources: List[str] = None
+    ) -> List[Material]:
+        """
+        采集素材（多源容错）
+        Args:
+            query: 搜索关键词
+            project_id: 项目ID
+            count: 需要的素材数量
+            sources: 素材源优先级列表
+        Returns:
+            素材列表
+        """
+        if sources is None:
+            sources = ["pexels", "pixabay", "unsplash", "ai_generated"]
+
+        collected = []
+
+        for source in sources:
+            try:
+                if source == "pexels":
+                    materials = await self._collect_from_pexels(query, project_id, count - len(collected))
+                elif source == "pixabay":
+                    materials = await self._collect_from_pixabay(query, project_id, count - len(collected))
+                elif source == "unsplash":
+                    materials = await self._collect_from_unsplash(query, project_id, count - len(collected))
+                elif source == "ai_generated":
+                    materials = await self._generate_ai_materials(query, project_id, count - len(collected))
+                else:
+                    continue
+
+                collected.extend(materials)
+
+                # 如果已经足够，停止采集
+                if len(collected) >= count:
+                    break
+
+            except Exception as e:
+                logger.warning(f"Failed to collect from {source}: {str(e)}")
+                continue
+
+        # 如果所有源都失败，使用后备素材
+        if len(collected) < count:
+            logger.warning("All sources failed, using fallback materials")
+            collected.extend(
+                self._get_fallback_materials(project_id, count - len(collected))
+            )
+
+        return collected[:count]
+
+    async def _collect_from_pexels(self, query: str, project_id: int, count: int) -> List[Material]:
+        """从Pexels采集素材"""
+        images = await self.search_images(query, per_page=count)
+        materials = []
+
+        for img in images:
+            material_id = img.get("id") or str(uuid.uuid4())
+
+            # Download material
+            local_path = await self.download_material(
+                img.get("source_url"),
+                str(project_id),
+                material_id
+            )
+
+            if not local_path:
+                continue
+
+            # Extract tags
+            tags = self._extract_tags(query, img)
+
+            # Create material record
+            material = Material(
+                id=material_id,
+                project_id=str(project_id),
+                material_type=img.get("type", "image"),
+                type=img.get("type", "image"),  # Legacy field
+                source=img.get("source", "pexels"),
+                source_id=img.get("id"),
+                source_url=img.get("source_url"),
+                local_path=local_path,
+                width=img.get("width"),
+                height=img.get("height"),
+                material_metadata={
+                    "thumbnail_url": img.get("thumbnail_url"),
+                    "photographer": img.get("photographer"),
+                    "photographer_url": img.get("photographer_url"),
+                    "avg_color": img.get("avg_color"),
+                    "alt": img.get("alt")
+                },
+                tags=tags,
+                description=img.get("alt", query),
+                quality_score=None,
+                is_used=False
+            )
+
+            if self.db:
+                self.db.add(material)
+            materials.append(material)
+
+        if self.db and materials:
+            self.db.commit()
+
+        return materials
+
+    async def _collect_from_pixabay(self, query: str, project_id: int, count: int) -> List[Material]:
+        """从Pixabay采集素材"""
+        api_key = settings.PIXABAY_API_KEY
+        if not api_key:
+            raise ValueError("Pixabay API key not configured")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://pixabay.com/api/videos/",
+                    params={
+                        "key": api_key,
+                        "q": query,
+                        "per_page": count,
+                        "safesearch": "true"
+                    },
+                    timeout=30.0
+                )
+
+                if response.status_code == 429:
+                    # Rate limit - return empty gracefully
+                    logger.warning("Pixabay API rate limit reached")
+                    return []
+
+                if response.status_code != 200:
+                    raise RuntimeError(f"Pixabay API error: {response.status_code}")
+
+                data = response.json()
+                materials = []
+
+                for item in data.get("hits", []):
+                    video_url = item["videos"]["large"]["url"]
+
+                    # Download
+                    local_path = await self._download_file(video_url, project_id)
+
+                    # Create record
+                    material = Material(
+                        project_id=str(project_id),
+                        material_type="video",
+                        source="pixabay",
+                        source_id=str(item["id"]),
+                        source_url=video_url,
+                        local_path=local_path,
+                        duration=item.get("duration"),
+                        width=item.get("pictureWidth"),
+                        height=item.get("pictureHeight"),
+                        tags=[query],
+                        description=item.get("tags"),
+                        material_metadata=item
+                    )
+
+                    if self.db:
+                        self.db.add(material)
+                    materials.append(material)
+
+                if self.db and materials:
+                    self.db.commit()
+                return materials
+        except httpx.TimeoutException as e:
+            logger.warning(f"Pixabay request timed out: {str(e)}")
+            return []
+        except httpx.RequestError as e:
+            logger.warning(f"Pixabay network error: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"Pixabay collection failed: {str(e)}")
+            raise
+
+    async def _collect_from_unsplash(self, query: str, project_id: int, count: int) -> List[Material]:
+        """从Unsplash采集图片"""
+        api_key = settings.UNSPLASH_ACCESS_KEY
+        if not api_key:
+            raise ValueError("Unsplash API key not configured")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.unsplash.com/search/photos",
+                headers={"Authorization": f"Client-ID {api_key}"},
+                params={
+                    "query": query,
+                    "per_page": count
+                },
+                timeout=30.0
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"Unsplash API error: {response.status_code}")
+
+            data = response.json()
+            materials = []
+
+            for item in data.get("results", []):
+                image_url = item["urls"]["regular"]
+
+                # Download
+                local_path = await self._download_file(image_url, project_id)
+
+                # Create record (图片作为静态素材)
+                material = Material(
+                    project_id=str(project_id),
+                    material_type="image",
+                    source="unsplash",
+                    source_id=item["id"],
+                    source_url=image_url,
+                    local_path=local_path,
+                    width=item.get("width"),
+                    height=item.get("height"),
+                    tags=[query],
+                    description=item.get("description"),
+                    material_metadata=item
+                )
+
+                if self.db:
+                    self.db.add(material)
+                materials.append(material)
+
+            if self.db and materials:
+                self.db.commit()
+            return materials
+
+    async def _generate_ai_materials(self, query: str, project_id: int, count: int) -> List[Material]:
+        """使用AI生成素材"""
+        # Note: AI generation will be implemented in Phase 3
+        # This is a placeholder that returns empty list for Phase 2
+        logger.info(f"AI material generation not available in Phase 2, skipping")
+        return []
+
+    def _get_fallback_materials(self, project_id: int, count: int) -> List[Material]:
+        """获取后备素材"""
+        # 从预置素材库中随机选择
+        fallback_dir = Path("data/fallback_materials")
+        if not fallback_dir.exists():
+            # 如果没有后备素材，创建纯色视频
+            return self._create_solid_color_materials(project_id, count)
+
+        materials = []
+        all_files = list(fallback_dir.glob("*.*"))
+
+        if not all_files:
+            return self._create_solid_color_materials(project_id, count)
+
+        selected = random.sample(all_files, min(count, len(all_files)))
+
+        for file_path in selected:
+            material = Material(
+                project_id=str(project_id),
+                material_type="video" if file_path.suffix in [".mp4", ".mov"] else "image",
+                source="fallback",
+                local_path=str(file_path),
+                tags=["fallback"],
+                material_metadata={"is_fallback": True}
+            )
+            if self.db:
+                self.db.add(material)
+            materials.append(material)
+
+        if self.db and materials:
+            self.db.commit()
+        return materials
+
+    def _create_solid_color_materials(self, project_id: int, count: int) -> List[Material]:
+        """创建纯色素材"""
+        from moviepy.editor import ColorClip
+
+        materials = []
+        colors = [
+            (50, 50, 50),   # 深灰
+            (70, 70, 70),   # 灰色
+            (30, 30, 30),   # 暗灰
+        ]
+
+        project_dir = Path(settings.DATA_DIR) / "projects" / str(project_id)
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        for i in range(count):
+            color = colors[i % len(colors)]
+            output_path = str(project_dir / f"fallback_{i}.mp4")
+
+            # 创建5秒纯色视频
+            clip = ColorClip(size=(1920, 1080), color=color, duration=5.0)
+            clip.write_videofile(output_path, fps=30, logger=None)
+
+            material = Material(
+                project_id=str(project_id),
+                material_type="video",
+                source="generated",
+                local_path=output_path,
+                tags=["fallback", "solid"],
+                material_metadata={"color": color}
+            )
+            if self.db:
+                self.db.add(material)
+            materials.append(material)
+
+        if self.db and materials:
+            self.db.commit()
+        return materials
+
+    async def _download_file(self, url: str, project_id: int) -> str:
+        """下载文件到本地"""
+        project_dir = Path(settings.DATA_DIR) / "materials" / str(project_id)
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate unique filename
+        filename = f"{uuid.uuid4().hex}{Path(url).suffix}"
+        local_path = project_dir / filename
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=30.0)
+
+            if response.status_code != 200:
+                raise RuntimeError(f"Failed to download file: {response.status_code}")
+
+            with open(local_path, "wb") as f:
+                f.write(response.content)
+
+        return str(local_path)
