@@ -25,3 +25,26 @@ class QualityReportResponse(QualityReportBase):
 
     class Config:
         from_attributes = True
+
+
+class QualityMetrics(BaseModel):
+    """质量指标"""
+    score: Decimal
+    max_score: int
+    metrics: Optional[Dict[str, Any]] = None
+    issues: List[str] = []
+
+
+class ComprehensiveQualityReport(BaseModel):
+    """综合质量报告"""
+    project_id: int
+    overall_score: Decimal
+    grade: str
+    breakdown: Dict[str, QualityMetrics]
+    recommendations: List[str]
+    issues: List[Dict[str, str]]
+    created_at: datetime = datetime.now()
+
+    class Config:
+        from_attributes = True
+
