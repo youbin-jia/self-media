@@ -1,7 +1,10 @@
 # backend/app/services/llm/openai_provider.py
 from typing import Dict, Any, Optional, List
+import logging
 from openai import AsyncOpenAI
 from .base import BaseLLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -43,7 +46,11 @@ class OpenAIProvider(BaseLLMProvider):
             )
             return response.choices[0].message.content
         except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"OpenAI API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"OpenAI API error: {error_type}")
 
     async def generate_with_history(
         self,
@@ -63,7 +70,11 @@ class OpenAIProvider(BaseLLMProvider):
             )
             return response.choices[0].message.content
         except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"OpenAI API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"OpenAI API error: {error_type}")
 
     def validate_config(self) -> bool:
         return bool(self.api_key)

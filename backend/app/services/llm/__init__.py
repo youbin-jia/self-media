@@ -1,5 +1,6 @@
 # backend/app/services/llm/__init__.py
 from typing import Dict, Any, Optional
+import threading
 from .base import BaseLLMProvider
 from .claude_provider import ClaudeProvider
 from .openai_provider import OpenAIProvider
@@ -11,12 +12,17 @@ class LLMProviderManager:
     """LLM Provider管理器"""
 
     _instance = None
-    _providers: Dict[str, BaseLLMProvider] = {}
+    _lock = threading.Lock()
 
     def __new__(cls):
+        # Double-check locking pattern for thread safety
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialize_providers()
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    # Initialize instance variables
+                    cls._instance._providers: Dict[str, BaseLLMProvider] = {}
+                    cls._instance._initialize_providers()
         return cls._instance
 
     def _initialize_providers(self):
@@ -63,7 +69,12 @@ class LLMProviderManager:
 llm_manager = LLMProviderManager()
 
 # 默认provider（向后兼容）
-llm_provider = llm_manager.get_provider("claude") if "claude" in llm_manager._providers else None
+llm_provider = None
+try:
+    llm_provider = llm_manager.get_provider("claude")
+except ValueError:
+    # Claude provider not configured
+    pass
 
 
 __all__ = [

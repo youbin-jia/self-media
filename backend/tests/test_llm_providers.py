@@ -72,7 +72,7 @@ class TestClaudeProvider:
 
             provider = ClaudeProvider(api_key="test_key")
 
-            with pytest.raises(RuntimeError, match="Claude API error"):
+            with pytest.raises(RuntimeError, match="Claude API error: Exception"):
                 await provider.generate("Test")
 
     def test_claude_provider_name(self):
@@ -287,14 +287,14 @@ class TestLLMErrorHandling:
     @pytest.mark.asyncio
     async def test_openai_timeout_handling(self):
         """测试OpenAI超时处理"""
-        with patch('openai.AsyncOpenAI') as mock_client:
+        with patch('app.services.llm.openai_provider.AsyncOpenAI') as mock_client_class:
             mock_instance = AsyncMock()
-            mock_client.return_value = mock_instance
+            mock_client_class.return_value = mock_instance
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=TimeoutError("Request timed out")
             )
 
             provider = OpenAIProvider(api_key="test_key")
 
-            with pytest.raises(RuntimeError, match="OpenAI API error"):
+            with pytest.raises(RuntimeError, match="OpenAI API error: TimeoutError"):
                 await provider.generate("Test")

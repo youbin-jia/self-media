@@ -1,7 +1,10 @@
 # backend/app/services/llm/glm_provider.py
 from typing import Dict, Any, Optional, List
+import logging
 import httpx
 from .base import BaseLLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class GLMProvider(BaseLLMProvider):
@@ -43,7 +46,11 @@ class GLMProvider(BaseLLMProvider):
                 response.raise_for_status()
                 return response.json()["text"]
         except Exception as e:
-            raise RuntimeError(f"GLM API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"GLM API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"GLM API error: {error_type}")
 
     async def generate_with_history(
         self,
@@ -69,7 +76,11 @@ class GLMProvider(BaseLLMProvider):
                 response.raise_for_status()
                 return response.json()["text"]
         except Exception as e:
-            raise RuntimeError(f"GLM API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"GLM API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"GLM API error: {error_type}")
 
     def validate_config(self) -> bool:
         return bool(self.endpoint)

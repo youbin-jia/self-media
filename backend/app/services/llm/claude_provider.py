@@ -1,7 +1,10 @@
 # backend/app/services/llm/claude_provider.py
 from typing import Dict, Any, Optional, List
+import logging
 import anthropic
 from .base import BaseLLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeProvider(BaseLLMProvider):
@@ -42,7 +45,11 @@ class ClaudeProvider(BaseLLMProvider):
             )
             return message.content[0].text
         except Exception as e:
-            raise RuntimeError(f"Claude API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"Claude API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"Claude API error: {error_type}")
 
     async def generate_with_history(
         self,
@@ -67,7 +74,11 @@ class ClaudeProvider(BaseLLMProvider):
             )
             return message.content[0].text
         except Exception as e:
-            raise RuntimeError(f"Claude API error: {str(e)}")
+            # Log full error for debugging
+            logger.error(f"Claude API error: {str(e)}", exc_info=True)
+            # Raise sanitized error message
+            error_type = type(e).__name__
+            raise RuntimeError(f"Claude API error: {error_type}")
 
     def validate_config(self) -> bool:
         return bool(self.api_key)
