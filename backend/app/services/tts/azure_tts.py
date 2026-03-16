@@ -2,6 +2,8 @@
 import azure.cognitiveservices.speech as speechsdk
 from typing import Dict, Any, Optional, List
 from pathlib import Path
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from .base import BaseTTSProvider
 
 
@@ -16,6 +18,8 @@ class AzureTTSProvider(BaseTTSProvider):
             subscription=subscription_key,
             region=region
         )
+        # Thread pool for blocking Azure SDK calls
+        self._executor = ThreadPoolExecutor(max_workers=3)
 
     @property
     def provider_name(self) -> str:
@@ -64,8 +68,12 @@ class AzureTTSProvider(BaseTTSProvider):
         </speak>
         """
 
-        # 合成语音
-        result = synthesizer.speak_ssml_async(ssml).get()
+        # Run blocking Azure SDK call in thread pool executor
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            self._executor,
+            lambda: synthesizer.speak_ssml_async(ssml).get()
+        )
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             return {

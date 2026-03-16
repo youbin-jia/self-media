@@ -1,5 +1,6 @@
 # backend/app/services/tts/__init__.py
 from typing import Dict, Any, Optional
+import threading
 from .base import BaseTTSProvider
 from .azure_tts import AzureTTSProvider
 from .elevenlabs_tts import ElevenLabsTTSProvider
@@ -10,12 +11,18 @@ class TTSProviderManager:
     """TTS Provider管理器"""
 
     _instance = None
-    _providers: Dict[str, BaseTTSProvider] = {}
+    _lock = threading.Lock()
 
     def __new__(cls):
+        # Double-check locking pattern for thread-safe singleton
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialize_providers()
+            with cls._lock:
+                # Double-check inside lock to prevent race condition
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    # Initialize instance variables (not class variables)
+                    cls._instance._providers = {}
+                    cls._instance._initialize_providers()
         return cls._instance
 
     def _initialize_providers(self):

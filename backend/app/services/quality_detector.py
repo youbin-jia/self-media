@@ -471,66 +471,92 @@ class QualityDetector:
         """
         import librosa
 
-        # 加载音频
-        y, sr = librosa.load(audio_path)
+        try:
+            # Validate file exists
+            from pathlib import Path
+            if not Path(audio_path).exists():
+                return {
+                    "overall_score": Decimal("0"),
+                    "grade": "E",
+                    "metrics": {},
+                    "issues": [{"type": "file_error", "message": f"音频文件不存在: {audio_path}"}],
+                    "recommendations": ["请提供有效的音频文件路径"]
+                }
 
-        # 计算指标
-        duration = len(y) / sr
-        rms = librosa.feature.rms(y=y)[0]
-        avg_volume = float(rms.mean())
+            # 加载音频
+            y, sr = librosa.load(audio_path)
 
-        # 检测静音段
-        silence_ratio = 1 - (len(librosa.effects.split(y, top_db=20)) / (len(y) / sr))
+            # 计算指标
+            duration = len(y) / sr
+            rms = librosa.feature.rms(y=y)[0]
+            avg_volume = float(rms.mean())
 
-        # 评分
-        score = 0.0
-        issues = []
+            # 检测静音段
+            silence_ratio = 1 - (len(librosa.effects.split(y, top_db=20)) / (len(y) / sr))
 
-        # 音量评分 (30分)
-        if 0.01 <= avg_volume <= 0.3:
-            volume_score = 30
-        elif 0.005 <= avg_volume <= 0.5:
-            volume_score = 20
-        else:
-            volume_score = 10
-            issues.append({
-                "type": "volume",
-                "message": f"音量异常: {avg_volume:.3f}"
-            })
-        score += volume_score
+            # 评分
+            score = 0.0
+            issues = []
 
-        # 清晰度评分 (40分) - 基于信噪比估计
-        clarity_score = min(40, silence_ratio * 40)
-        score += clarity_score
+            # 音量评分 (30分)
+            if 0.01 <= avg_volume <= 0.3:
+                volume_score = 30
+            elif 0.005 <= avg_volume <= 0.5:
+                volume_score = 20
+            else:
+                volume_score = 10
+                issues.append({
+                    "type": "volume",
+                    "message": f"音量异常: {avg_volume:.3f}"
+                })
+            score += volume_score
 
-        # 时长合理性 (30分)
-        if duration >= 30:  # 至少30秒
-            duration_score = 30
-        elif duration >= 10:
-            duration_score = 20
-        else:
-            duration_score = 10
-            issues.append({
-                "type": "duration",
-                "message": f"音频时长过短: {duration:.1f}秒"
-            })
-        score += duration_score
+            # 清晰度评分 (40分) - 基于信噪比估计
+            clarity_score = min(40, silence_ratio * 40)
+            score += clarity_score
 
-        overall_score = Decimal(str(score)).quantize(Decimal("0.01"))
-        grade = self._calculate_grade(overall_score)
+            # 时长合理性 (30分)
+            if duration >= 30:  # 至少30秒
+                duration_score = 30
+            elif duration >= 10:
+                duration_score = 20
+            else:
+                duration_score = 10
+                issues.append({
+                    "type": "duration",
+                    "message": f"音频时长过短: {duration:.1f}秒"
+                })
+            score += duration_score
 
-        return {
-            "overall_score": overall_score,
-            "grade": grade,
-            "metrics": {
-                "duration": duration,
-                "average_volume": avg_volume,
-                "silence_ratio": silence_ratio,
-                "sample_rate": sr
-            },
-            "issues": issues,
-            "recommendations": self._generate_audio_recommendations(grade, issues)
-        }
+            overall_score = Decimal(str(score)).quantize(Decimal("0.01"))
+            grade = self._calculate_grade(overall_score)
+
+            return {
+                "overall_score": overall_score,
+                "grade": grade,
+                "metrics": {
+                    "duration": duration,
+                    "average_volume": avg_volume,
+                    "silence_ratio": silence_ratio,
+                    "sample_rate": sr
+                },
+                "issues": issues,
+                "recommendations": self._generate_audio_recommendations(grade, issues)
+            }
+
+        except Exception as e:
+            # Handle audio processing errors (file I/O, librosa errors, etc.)
+            error_msg = str(e)
+            return {
+                "overall_score": Decimal("0"),
+                "grade": "E",
+                "metrics": {},
+                "issues": [{
+                    "type": "processing_error",
+                    "message": f"音频处理失败: {error_msg[:200]}"  # Truncate long error messages
+                }],
+                "recommendations": ["音频文件可能已损坏或格式不支持，请检查文件"]
+            }
 
     def _generate_audio_recommendations(self, grade: str, issues: List[Dict[str, Any]]) -> List[str]:
         """生成音频质量改进建议"""

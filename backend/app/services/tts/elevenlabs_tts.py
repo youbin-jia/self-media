@@ -54,7 +54,15 @@ class ElevenLabsTTSProvider(BaseTTSProvider):
             )
 
             if response.status_code != 200:
-                raise RuntimeError(f"ElevenLabs API error: {response.text}")
+                # Sanitize error message to avoid exposing API keys
+                error_msg = response.text
+                # Remove common patterns that might contain API keys
+                if "api_key" in error_msg.lower() or "authorization" in error_msg.lower():
+                    error_msg = f"API error (status {response.status_code}): Authentication or authorization error"
+                else:
+                    # Truncate long error messages
+                    error_msg = error_msg[:200] if len(error_msg) > 200 else error_msg
+                raise RuntimeError(f"ElevenLabs API error: {error_msg}")
 
             # 保存音频文件
             Path(output_path).write_bytes(response.content)
