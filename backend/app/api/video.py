@@ -2,7 +2,7 @@
 """Video API Routes"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -15,6 +15,7 @@ router = APIRouter()
 class SynthesizeRequest(BaseModel):
     """Request model for video synthesis"""
     project_id: str
+    platforms: List[str] = ["horizontal"]  # Support multi-platform export
 
 
 class SynthesizeResponse(BaseModel):
@@ -68,7 +69,7 @@ async def trigger_synthesis(
         )
 
     # Trigger Celery task
-    task = synthesize_video_task.delay(request.project_id)
+    task = synthesize_video_task.delay(request.project_id, request.platforms)
 
     return SynthesizeResponse(
         task_id=task.id,

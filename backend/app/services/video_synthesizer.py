@@ -138,6 +138,95 @@ class VideoSynthesizer:
 
         return str(output_path)
 
+    def export_for_platform(
+        self,
+        video_clip: VideoFileClip,
+        platform: str,
+        output_path: str
+    ) -> str:
+        """
+        为特定平台导出视频
+        Args:
+            video_clip: 视频片段
+            platform: 平台类型 (horizontal, vertical, square)
+            output_path: 输出路径
+        Returns:
+            输出文件路径
+        """
+        config = self.PLATFORM_CONFIGS.get(platform, self.PLATFORM_CONFIGS["horizontal"])
+        target_width, target_height = config["resolution"]
+
+        # 调整分辨率
+        if video_clip.size != (target_width, target_height):
+            video_clip = self._adapt_aspect_ratio(
+                video_clip,
+                target_width,
+                target_height
+            )
+
+        # 导出
+        video_clip.write_videofile(
+            output_path,
+            fps=config["fps"],
+            codec="libx264",
+            bitrate="8000k",
+            audio_codec="aac",
+            audio_bitrate="192k",
+            verbose=False,
+            logger=None
+        )
+
+        return output_path
+
+    def _adapt_aspect_ratio(
+        self,
+        clip: VideoFileClip,
+        target_width: int,
+        target_height: int
+    ) -> VideoFileClip:
+        """
+        适配视频宽高比
+        Args:
+            clip: 原始视频
+            target_width: 目标宽度
+            target_height: 目标高度
+        Returns:
+            适配后的视频
+        """
+        return self.processor._adapt_aspect_ratio(clip, target_width, target_height)
+
+    def create_base_clip(self, project_id: str) -> VideoFileClip:
+        """
+        创建基础视频片段（从项目素材）
+        Args:
+            project_id: 项目ID
+        Returns:
+            基础视频片段
+        """
+        # This is a simplified version - in production, would load from project materials
+        # For now, return a mock clip for testing
+        from pathlib import Path
+        project_video_dir = self.videos_dir / project_id
+        base_video_path = project_video_dir / "output.mp4"
+
+        if base_video_path.exists():
+            return VideoFileClip(str(base_video_path))
+        else:
+            raise ValueError(f"Base video not found for project {project_id}")
+
+    def get_output_path(self, project_id: str, platform: str) -> str:
+        """
+        获取输出视频路径
+        Args:
+            project_id: 项目ID
+            platform: 平台类型
+        Returns:
+            输出文件路径
+        """
+        project_video_dir = self.videos_dir / project_id
+        project_video_dir.mkdir(parents=True, exist_ok=True)
+        return str(project_video_dir / f"output_{platform}.mp4")
+
     def get_video_info(self, video_path: str) -> Dict[str, Any]:
         """
         Get video file information

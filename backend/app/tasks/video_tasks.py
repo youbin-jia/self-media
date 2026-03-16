@@ -1,7 +1,7 @@
 # backend/app/tasks/video_tasks.py
 """Celery Tasks for Video Synthesis"""
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 from celery import current_task
 from sqlalchemy.orm import Session
 
@@ -12,16 +12,24 @@ from app.services.video_synthesizer import VideoSynthesizer
 
 
 @celery_app.task(bind=True)
-def synthesize_video_task(self, project_id: str) -> Dict[str, Any]:
+def synthesize_video_task(
+    self,
+    project_id: str,
+    platforms: List[str] = None
+) -> Dict[str, Any]:
     """
-    Celery task to synthesize video from project materials
+    Celery task to synthesize video from project materials (supports multi-platform)
 
     Args:
         project_id: The project ID to synthesize video for
+        platforms: List of platforms to export for (e.g., ["horizontal", "vertical", "square"])
 
     Returns:
         Dictionary with task result including video path and status
     """
+    if platforms is None:
+        platforms = ["horizontal"]
+
     db: Session = SessionLocal()
 
     try:
@@ -70,11 +78,29 @@ def synthesize_video_task(self, project_id: str) -> Dict[str, Any]:
                 meta={"progress": progress, "status": status}
             )
 
-        video_path = synthesizer.synthesize(
+        # Create base video clip from materials
+        base_clip = synthesizer.synthesize(
             project_id=project_id,
             materials=materials,
             progress_callback=progress_callback
         )
+
+        # Export for each platform
+        outputs = {}
+        for i, platform in enumerate(platforms):
+            progress = 20 + int((i / len(platforms)) * 70)
+            current_task.update_state(
+                state="PROGRESS",
+                meta={"progress": progress, "status": f"Exporting for {platform}..."}
+            )
+
+            output_path = synthesizer.get_output_path(project_id, platform)
+            # Load the base clip
+            from moviepy.editor import VideoFileClip
+            clip = VideoFileClip(base_clip)
+            synthesizer.export_for_platform(clip, platform, output_path)
+            clip.close()
+            outputs[platform] = output_path
 
         # Update progress: Finalizing
         current_task.update_state(
@@ -86,7 +112,8 @@ def synthesize_video_task(self, project_id: str) -> Dict[str, Any]:
         project.status = "preview_ready"
         if not project.project_metadata:
             project.project_metadata = {}
-        project.project_metadata["video_path"] = video_path
+        project.project_metadata["video_path"] = outputs.get("horizontal") or outputs.get(platforms[0])
+        project.project_metadata["video_paths"] = outputs
         db.commit()
 
         # Update progress: Complete
@@ -98,7 +125,7 @@ def synthesize_video_task(self, project_id: str) -> Dict[str, Any]:
         return {
             "status": "success",
             "project_id": project_id,
-            "video_path": video_path,
+            "outputs": outputs,
             "message": "Video synthesis completed successfully"
         }
 
