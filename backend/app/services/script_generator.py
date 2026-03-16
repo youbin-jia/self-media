@@ -1,17 +1,23 @@
 # backend/app/services/script_generator.py
 """Script Generation Service"""
 from typing import List, Dict, Any
-from app.services.llm_provider import LLMProvider, get_llm_provider
+from app.services.llm import llm_manager, BaseLLMProvider
 from app.services.quality_detector import QualityDetector, get_quality_detector
 from app.schemas.script import ScriptSegment
+from app.config import settings
 
 
 class ScriptGenerator:
     """Service for generating video scripts"""
 
-    def __init__(self, llm_provider: LLMProvider = None, quality_detector: QualityDetector = None):
-        self.llm = llm_provider or get_llm_provider()
+    def __init__(self, provider_name: str = None, quality_detector: QualityDetector = None):
+        self.provider_name = provider_name or settings.DEFAULT_LLM_PROVIDER
         self.quality_detector = quality_detector or get_quality_detector()
+
+    @property
+    def llm(self) -> BaseLLMProvider:
+        """Get the LLM provider"""
+        return llm_manager.get_provider(self.provider_name)
 
     async def generate_outline(self, topic: str, style: str = "educational") -> str:
         """

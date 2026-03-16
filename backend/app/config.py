@@ -12,7 +12,15 @@ class Settings(BaseSettings):
 
     # API Keys
     ANTHROPIC_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
     PEXELS_API_KEY: Optional[str] = None
+
+    # GLM本地模型
+    GLM_ENDPOINT: Optional[str] = None
+
+    # LLM配置
+    DEFAULT_LLM_PROVIDER: str = "claude"
+    LLM_FALLBACK_ENABLED: bool = True
 
     # App Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"
