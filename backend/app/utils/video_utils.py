@@ -56,12 +56,10 @@ class VideoProcessor:
                 return CompositeVideoClip([clip1_faded, clip2_faded.set_start(clip1.duration - duration)])
 
             elif transition_type == "crossfade":
-                # 交叉淡入淡出
-                clip1_faded = fadeout(clip1, duration)
-                clip2_faded = fadein(clip2, duration)
-                # Use crossfade by setting opacity
-                clip2_crossfaded = clip2_faded.set_start(clip1.duration - duration).set_opacity(lambda t: t / duration)
-                return CompositeVideoClip([clip1_faded, clip2_crossfaded])
+                # 交叉淡入淡出 - use MoviePy's crossfade methods
+                clip1_crossfaded = clip1.crossfadeout(duration)
+                clip2_crossfaded = clip2.crossfadein(duration)
+                return CompositeVideoClip([clip1_crossfaded, clip2_crossfaded.set_start(clip1.duration - duration)])
 
             elif transition_type == "wipe":
                 # 擦除转场 - implement proper wipe effect

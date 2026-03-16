@@ -172,26 +172,25 @@ class TestVideoProcessor:
         """测试交叉淡入淡出转场"""
         mock_clip1 = Mock()
         mock_clip1.duration = 10.0
+        mock_clip1.crossfadeout = Mock(return_value=mock_clip1)
         mock_clip2 = Mock()
         mock_clip2.duration = 10.0
+        mock_clip2.crossfadein = Mock(return_value=mock_clip2)
+        mock_clip2.set_start = Mock(return_value=mock_clip2)
 
-        with patch('app.utils.video_utils.fadeout') as mock_fadeout:
-            with patch('app.utils.video_utils.fadein') as mock_fadein:
-                with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
-                    mock_fadeout.return_value = mock_clip1
-                    mock_fadein.return_value = mock_clip2
-                    mock_composite.return_value = Mock()
+        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+            mock_composite.return_value = Mock()
 
-                    processor = VideoProcessor()
-                    result = processor.add_transition(
-                        mock_clip1,
-                        mock_clip2,
-                        transition_type="crossfade",
-                        duration=1.0
-                    )
+            processor = VideoProcessor()
+            result = processor.add_transition(
+                mock_clip1,
+                mock_clip2,
+                transition_type="crossfade",
+                duration=1.0
+            )
 
-                    mock_fadeout.assert_called_once_with(mock_clip1, 1.0)
-                    mock_fadein.assert_called_once_with(mock_clip2, 1.0)
+            mock_clip1.crossfadeout.assert_called_once_with(1.0)
+            mock_clip2.crossfadein.assert_called_once_with(1.0)
 
     def test_add_transition_wipe(self):
         """测试擦除转场"""
@@ -356,6 +355,122 @@ class TestVideoProcessor:
         processor = VideoProcessor()
         with pytest.raises(ValueError, match="Clip must have valid positive duration"):
             processor.add_ken_burns_effect(mock_clip, zoom_start=1.0, zoom_end=1.2)
+
+
+class TestVideoProcessorRealClips:
+    """Integration tests with real VideoClip objects to catch runtime errors"""
+
+    def test_fade_transition_real_clip(self):
+        """Test fade transition with real VideoClip objects"""
+        from moviepy.editor import VideoClip
+
+        # Create two simple test clips
+        def make_frame1(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 100
+
+        def make_frame2(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 200
+
+        clip1 = VideoClip(make_frame1, duration=3)
+        clip2 = VideoClip(make_frame2, duration=3)
+
+        processor = VideoProcessor()
+        result = processor.add_transition(clip1, clip2, transition_type="fade", duration=0.5)
+
+        # Verify the result is a CompositeVideoClip
+        assert result is not None
+        assert result.duration >= 2.5  # Should be ~3 seconds
+
+        # Clean up
+        clip1.close()
+        clip2.close()
+        result.close()
+
+    def test_crossfade_transition_real_clip(self):
+        """Test crossfade transition with real VideoClip objects"""
+        from moviepy.editor import VideoClip
+
+        # Create two simple test clips
+        def make_frame1(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 100
+
+        def make_frame2(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 200
+
+        clip1 = VideoClip(make_frame1, duration=3)
+        clip2 = VideoClip(make_frame2, duration=3)
+
+        processor = VideoProcessor()
+        # This will fail with the old buggy implementation
+        result = processor.add_transition(clip1, clip2, transition_type="crossfade", duration=0.5)
+
+        # Verify the result is a CompositeVideoClip
+        assert result is not None
+        assert result.duration >= 2.5  # Should be ~3 seconds
+
+        # Test that we can actually get a frame (will fail if crossfade is broken)
+        frame = result.get_frame(2.5)
+        assert frame.shape == (1080, 1920, 3)
+
+        # Clean up
+        clip1.close()
+        clip2.close()
+        result.close()
+
+    def test_wipe_transition_real_clip(self):
+        """Test wipe transition with real VideoClip objects"""
+        from moviepy.editor import VideoClip
+
+        # Create two simple test clips with different colors
+        def make_frame1(t):
+            return np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame2(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 255
+
+        clip1 = VideoClip(make_frame1, duration=3)
+        clip2 = VideoClip(make_frame2, duration=3)
+
+        processor = VideoProcessor()
+        result = processor.add_transition(clip1, clip2, transition_type="wipe", duration=0.5)
+
+        # Verify the result is created
+        assert result is not None
+        assert result.duration == 0.5  # Wipe returns a clip with transition duration
+
+        # Test that we can get a frame
+        frame = result.get_frame(0.25)
+        assert frame.shape == (1080, 1920, 3)
+
+        # Clean up
+        clip1.close()
+        clip2.close()
+        result.close()
+
+    def test_no_transition_real_clip(self):
+        """Test no transition with real VideoClip objects"""
+        from moviepy.editor import VideoClip
+
+        def make_frame1(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 100
+
+        def make_frame2(t):
+            return np.ones((1080, 1920, 3), dtype=np.uint8) * 200
+
+        clip1 = VideoClip(make_frame1, duration=3)
+        clip2 = VideoClip(make_frame2, duration=3)
+
+        processor = VideoProcessor()
+        result = processor.add_transition(clip1, clip2, transition_type="none", duration=1.0)
+
+        # Verify the result
+        assert result is not None
+        assert result.duration >= 5.5  # Both clips with 3 seconds each
+
+        # Clean up
+        clip1.close()
+        clip2.close()
+        result.close()
 
 
 class TestVideoProcessorIntegration:
