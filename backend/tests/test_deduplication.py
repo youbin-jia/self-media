@@ -63,7 +63,7 @@ class TestMaterialDeduplicator:
         result = MaterialDeduplicator.check_duplicate(
             mock_db,
             "test_hash",
-            project_id=1
+            project_id="project-uuid-123"  # String type to match database schema
         )
 
         assert result == mock_material
@@ -116,7 +116,7 @@ class TestMaterialDeduplicator:
         similar_material2.material_type = "video"
         similar_material2.tags = ["city", "urban"]
 
-        mock_db.query.return_value.filter.return_value.all.return_value = [
+        mock_db.query.return_value.filter.return_value.limit.return_value.all.return_value = [
             similar_material1,
             similar_material2
         ]

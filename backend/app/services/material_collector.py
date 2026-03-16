@@ -3,12 +3,15 @@
 import os
 import httpx
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.utils.deduplication import MaterialDeduplicator
+
+logger = logging.getLogger(__name__)
 
 
 class MaterialCollector:
@@ -83,8 +86,14 @@ class MaterialCollector:
                     }
                     for photo in photos
                 ]
-        except Exception:
-            # Fallback to mock data on any error
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"HTTP error searching Pexels for '{query}': {e.response.status_code}")
+            return self._get_mock_images(query, per_page)
+        except httpx.RequestError as e:
+            logger.warning(f"Network error searching Pexels for '{query}': {str(e)}")
+            return self._get_mock_images(query, per_page)
+        except Exception as e:
+            logger.error(f"Unexpected error searching Pexels for '{query}': {str(e)}", exc_info=True)
             return self._get_mock_images(query, per_page)
 
     async def download_material(
@@ -126,7 +135,17 @@ class MaterialCollector:
                     f.write(response.content)
 
             return str(local_path)
-        except Exception:
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error downloading material from {source_url}: {e.response.status_code}")
+            return None
+        except httpx.RequestError as e:
+            logger.error(f"Network error downloading material from {source_url}: {str(e)}")
+            return None
+        except IOError as e:
+            logger.error(f"File I/O error saving material to {local_path}: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error downloading material from {source_url}: {str(e)}", exc_info=True)
             return None
 
     def _get_mock_images(self, query: str, count: int = 10) -> List[Dict[str, Any]]:

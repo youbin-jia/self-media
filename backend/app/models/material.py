@@ -1,12 +1,15 @@
 # backend/app/models/material.py
 import uuid
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, JSON, Integer, Float, Boolean
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, JSON, Integer, Float, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from app.database import Base
 
 
 class Material(Base):
     __tablename__ = "materials"
+    __table_args__ = (
+        UniqueConstraint('project_id', 'file_hash', name='uq_material_project_hash'),
+    )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
@@ -20,7 +23,7 @@ class Material(Base):
 
     # Local storage
     local_path = Column(Text, nullable=False)
-    file_hash = Column(String(64), unique=True, index=True)  # SHA256 hash for deduplication
+    file_hash = Column(String(64), index=True)  # SHA256 hash for deduplication (unique per project)
 
     # Metadata
     duration = Column(Float)  # Duration in seconds
