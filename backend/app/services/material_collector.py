@@ -217,3 +217,136 @@ class MaterialCollector:
             tags.extend([word.strip() for word in words[:3] if len(word) > 2])
 
         return list(set(tags))  # Remove duplicates
+
+    async def collect_with_deduplication(
+        self,
+        query: str,
+        project_id: str,
+        count: int = 10,
+        skip_duplicate: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Collect materials with deduplication support
+
+        Args:
+            query: Search query
+            project_id: Project ID
+            count: Number of materials to collect
+            skip_duplicate: Whether to skip duplicates
+
+        Returns:
+            List of collected materials (as dictionaries)
+
+        Raises:
+            ValueError: If database session not initialized
+        """
+        if not self.db:
+            raise ValueError("Database session required for deduplication")
+
+        from app.models.material import Material
+
+        # Search for images
+        images = await self.search_images(query, per_page=count)
+
+        collected = []
+        for img in images:
+            material_id = img.get("id") or str(uuid.uuid4())
+
+            # Download material
+            local_path = await self.download_material(
+                img.get("source_url"),
+                project_id,
+                material_id
+            )
+
+            if not local_path:
+                continue
+
+            # Calculate file hash if file exists
+            file_hash = None
+            file_size = None
+            if Path(local_path).exists():
+                file_hash = self.deduplicator.calculate_file_hash(local_path)
+                file_size = Path(local_path).stat().st_size
+
+            # Check for duplicates if enabled
+            if skip_duplicate and file_hash:
+                existing = self.deduplicator.check_duplicate(
+                    self.db,
+                    file_hash,
+                    project_id
+                )
+                if existing:
+                    # Delete duplicate file, return existing material info
+                    if Path(local_path).exists():
+                        Path(local_path).unlink()
+
+                    collected.append({
+                        "id": existing.id,
+                        "project_id": existing.project_id,
+                        "material_type": existing.material_type,
+                        "type": existing.type or existing.material_type,
+                        "source": existing.source,
+                        "source_id": existing.source_id,
+                        "source_url": existing.source_url,
+                        "local_path": existing.local_path,
+                        "file_hash": existing.file_hash,
+                        "duration": existing.duration,
+                        "width": existing.width,
+                        "height": existing.height,
+                        "file_size": existing.file_size,
+                        "material_metadata": existing.material_metadata,
+                        "tags": existing.tags,
+                        "description": existing.description,
+                        "quality_score": existing.quality_score,
+                        "is_used": existing.is_used,
+                        "is_duplicate": True
+                    })
+                    continue
+
+            # Extract tags
+            tags = self._extract_tags(query, img)
+
+            # Create new material record
+            material_data = {
+                "id": material_id,
+                "project_id": project_id,
+                "material_type": img.get("type", "image"),
+                "type": img.get("type", "image"),  # Legacy field
+                "source": img.get("source", "unknown"),
+                "source_id": img.get("id"),
+                "source_url": img.get("source_url"),
+                "local_path": local_path,
+                "file_hash": file_hash,
+                "width": img.get("width"),
+                "height": img.get("height"),
+                "file_size": file_size,
+                "material_metadata": {
+                    "thumbnail_url": img.get("thumbnail_url"),
+                    "photographer": img.get("photographer"),
+                    "photographer_url": img.get("photographer_url"),
+                    "avg_color": img.get("avg_color"),
+                    "alt": img.get("alt")
+                },
+                "tags": tags,
+                "description": img.get("alt", query),
+                "quality_score": None,  # Can be set later by quality detector
+                "is_used": False,
+                "is_duplicate": False
+            }
+
+            # Create Material object
+            material = Material(**material_data)
+            self.db.add(material)
+            self.db.flush()  # Flush to get the created_at timestamp
+
+            # Update material_data with created_at
+            material_data["created_at"] = material.created_at
+
+            collected.append(material_data)
+
+        # Commit all new materials
+        if collected:
+            self.db.commit()
+
+        return collected

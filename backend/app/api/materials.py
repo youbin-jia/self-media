@@ -20,9 +20,10 @@ async def collect_materials(
     db: Session = Depends(get_db)
 ):
     """
-    Collect materials for a project
+    Collect materials for a project with deduplication
 
     Extracts keywords from the project's topic_title and searches for images.
+    Performs deduplication based on file hash to prevent duplicate materials.
 
     Args:
         project_id: The project ID to collect materials for
@@ -40,8 +41,8 @@ async def collect_materials(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Initialize collector
-    collector = MaterialCollector()
+    # Initialize collector with database session
+    collector = MaterialCollector(db=db)
 
     # Extract keywords from topic_title
     topic_title = project.topic_title or project.title
@@ -50,51 +51,28 @@ async def collect_materials(
     # Build search query from keywords
     query = " ".join(keywords) if keywords else topic_title
 
-    # Search for images
-    images = await collector.search_images(query, per_page=10)
+    # Collect materials with deduplication
+    collected_data = await collector.collect_with_deduplication(
+        query=query,
+        project_id=project_id,
+        count=10,
+        skip_duplicate=True
+    )
 
-    # Create material records
-    materials = []
-    for img in images:
-        material = Material(
-            id=img.get("id") or str(__import__('uuid').uuid4()),
-            project_id=project_id,
-            type=img.get("type", "image"),
-            source=img.get("source", "unknown"),
-            source_url=img.get("source_url"),
-            local_path=None,  # Will be set after download
-            material_metadata={
-                "thumbnail_url": img.get("thumbnail_url"),
-                "width": img.get("width"),
-                "height": img.get("height"),
-                "photographer": img.get("photographer"),
-                "photographer_url": img.get("photographer_url"),
-                "avg_color": img.get("avg_color"),
-                "alt": img.get("alt")
-            }
-        )
-
-        db.add(material)
-        materials.append(material)
-
-    db.commit()
-
-    # Refresh to get created_at timestamps
-    for material in materials:
-        db.refresh(material)
-
-    # Build response with metadata mapping
+    # Build response from collected data
+    # The materials are already in the database now
     result = []
-    for material in materials:
+    for data in collected_data:
         material_dict = {
-            "id": material.id,
-            "project_id": material.project_id,
-            "type": material.type,
-            "source": material.source,
-            "source_url": material.source_url,
-            "local_path": material.local_path,
-            "metadata": material.material_metadata,
-            "created_at": material.created_at
+            "id": data["id"],
+            "project_id": data["project_id"],
+            "type": data.get("type") or data.get("material_type"),
+            "source": data["source"],
+            "source_url": data.get("source_url"),
+            "local_path": data.get("local_path"),
+            "metadata": data.get("material_metadata"),
+            "is_used": data.get("is_used", False),
+            "created_at": data.get("created_at")
         }
         result.append(MaterialResponse(**material_dict))
 

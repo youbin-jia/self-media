@@ -191,33 +191,58 @@ class TestEndToEndFlow:
         project_id = getattr(self.__class__, "project_id", None)
         assert project_id is not None
 
-        mock_images = [
+        # Use unique IDs and hashes for this test run
+        import uuid
+        from datetime import datetime
+
+        material_id_1 = f"img-1-{uuid.uuid4().hex[:8]}"
+        material_id_2 = f"img-2-{uuid.uuid4().hex[:8]}"
+        file_hash_1 = f"hash1-{uuid.uuid4().hex}"
+        file_hash_2 = f"hash2-{uuid.uuid4().hex}"
+        now = datetime.now()
+
+        mock_collected_data = [
             {
-                "id": "img-1",
+                "id": material_id_1,
+                "project_id": project_id,
+                "material_type": "image",
                 "type": "image",
                 "source": "pexels",
+                "source_id": material_id_1,
                 "source_url": "https://example.com/image1.jpg",
-                "thumbnail_url": "https://example.com/thumb1.jpg",
+                "local_path": f"/data/materials/{project_id}/{material_id_1}.jpg",
+                "file_hash": file_hash_1,
                 "width": 1920,
                 "height": 1080,
-                "photographer": "Test Photographer"
+                "tags": ["AI", "technology"],
+                "material_metadata": {"test": True},
+                "is_duplicate": False,
+                "created_at": now
             },
             {
-                "id": "img-2",
+                "id": material_id_2,
+                "project_id": project_id,
+                "material_type": "image",
                 "type": "image",
                 "source": "pexels",
+                "source_id": material_id_2,
                 "source_url": "https://example.com/image2.jpg",
-                "thumbnail_url": "https://example.com/thumb2.jpg",
+                "local_path": f"/data/materials/{project_id}/{material_id_2}.jpg",
+                "file_hash": file_hash_2,
                 "width": 1920,
                 "height": 1080,
-                "photographer": "Another Photographer"
+                "tags": ["AI", "technology"],
+                "material_metadata": {"test": True},
+                "is_duplicate": False,
+                "created_at": now
             }
         ]
 
+        # Mock the collector
         with patch("app.api.materials.MaterialCollector") as MockCollector:
             mock_collector = MagicMock()
             mock_collector.extract_keywords.return_value = ["AI", "technology", "2024"]
-            mock_collector.search_images = AsyncMock(return_value=mock_images)
+            mock_collector.collect_with_deduplication = AsyncMock(return_value=mock_collected_data)
             MockCollector.return_value = mock_collector
 
             response = client.post(
