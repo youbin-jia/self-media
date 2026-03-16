@@ -7,8 +7,9 @@ from typing import List
 from app.database import get_db
 from app.models.material import Material
 from app.models.project import Project
-from app.schemas.material import MaterialCreate, MaterialResponse
+from app.schemas.material import MaterialCreate, MaterialResponse, MaterialWithTagSearch
 from app.services.material_collector import MaterialCollector
+from app.utils.deduplication import MaterialDeduplicator
 
 router = APIRouter()
 
@@ -145,3 +146,64 @@ async def get_project_materials(
         result.append(MaterialResponse(**material_dict))
 
     return result
+
+
+@router.post("/search")
+async def search_materials(
+    search: MaterialWithTagSearch,
+    db: Session = Depends(get_db)
+):
+    """
+    Search materials by tags
+
+    Args:
+        search: Search parameters with tags, material_type, and min_quality_score
+        db: Database session
+
+    Returns:
+        List of materials matching the search criteria
+    """
+    query = db.query(Material).filter(Material.tags.contains(search.tags))
+
+    if search.material_type:
+        query = query.filter(Material.material_type == search.material_type)
+
+    if search.min_quality_score:
+        query = query.filter(Material.quality_score >= search.min_quality_score)
+
+    materials = query.limit(search.limit).all()
+    return {"materials": materials}
+
+
+@router.get("/{material_id}/similar")
+async def find_similar_materials(
+    material_id: str,
+    threshold: float = 0.7,
+    db: Session = Depends(get_db)
+):
+    """
+    Find similar materials
+
+    Args:
+        material_id: The material ID to find similar materials for
+        threshold: Similarity threshold (0-1)
+        db: Database session
+
+    Returns:
+        Material and list of similar materials with similarity scores
+
+    Raises:
+        HTTPException: 404 if material not found
+    """
+    material = db.query(Material).filter(Material.id == material_id).first()
+    if not material:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    similar = MaterialDeduplicator.find_similar_materials(db, material, threshold)
+    return {
+        "material": material,
+        "similar_materials": [
+            {"material": m, "similarity": sim}
+            for m, sim in similar
+        ]
+    }

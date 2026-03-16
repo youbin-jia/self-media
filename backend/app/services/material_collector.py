@@ -5,17 +5,21 @@ import httpx
 import uuid
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.deduplication import MaterialDeduplicator
 
 
 class MaterialCollector:
     """Service for collecting image/video materials from Pexels API or mock data"""
 
-    def __init__(self):
+    def __init__(self, db: Optional[Session] = None):
+        self.db = db
         self.api_key = settings.PEXELS_API_KEY
         self.base_url = "https://api.pexels.com/v1"
         self.materials_dir = Path(settings.DATA_DIR) / "materials"
+        self.deduplicator = MaterialDeduplicator()
         self._ensure_materials_dir()
 
     def _ensure_materials_dir(self):
@@ -186,3 +190,30 @@ class MaterialCollector:
         ]
 
         return keywords[:max_keywords]
+
+    def _extract_tags(self, query: str, item: dict) -> List[str]:
+        """
+        Extract tags from material
+
+        Args:
+            query: Search query
+            item: Material item data
+
+        Returns:
+            List of tags
+        """
+        tags = [query]
+
+        # Extract from Pexels keywords if available
+        if "tags" in item:
+            if isinstance(item["tags"], list):
+                tags.extend([tag.strip() for tag in item["tags"][:5]])
+            elif isinstance(item["tags"], str):
+                tags.extend([tag.strip() for tag in item["tags"].split(",")[:5]])
+
+        # Extract from alt text
+        if "alt" in item and item["alt"]:
+            words = item["alt"].split()
+            tags.extend([word.strip() for word in words[:3] if len(word) > 2])
+
+        return list(set(tags))  # Remove duplicates
