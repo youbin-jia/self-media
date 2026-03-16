@@ -195,25 +195,6 @@ class VideoSynthesizer:
         """
         return self.processor._adapt_aspect_ratio(clip, target_width, target_height)
 
-    def create_base_clip(self, project_id: str) -> VideoFileClip:
-        """
-        创建基础视频片段（从项目素材）
-        Args:
-            project_id: 项目ID
-        Returns:
-            基础视频片段
-        """
-        # This is a simplified version - in production, would load from project materials
-        # For now, return a mock clip for testing
-        from pathlib import Path
-        project_video_dir = self.videos_dir / project_id
-        base_video_path = project_video_dir / "output.mp4"
-
-        if base_video_path.exists():
-            return VideoFileClip(str(base_video_path))
-        else:
-            raise ValueError(f"Base video not found for project {project_id}")
-
     def get_output_path(self, project_id: str, platform: str) -> str:
         """
         获取输出视频路径

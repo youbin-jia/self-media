@@ -1,6 +1,7 @@
 # backend/app/tasks/video_tasks.py
 """Celery Tasks for Video Synthesis"""
 import os
+import logging
 from typing import Dict, Any, List
 from celery import current_task
 from sqlalchemy.orm import Session
@@ -9,6 +10,8 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.project import Project
 from app.services.video_synthesizer import VideoSynthesizer
+
+logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True)
@@ -98,9 +101,11 @@ def synthesize_video_task(
             # Load the base clip
             from moviepy.editor import VideoFileClip
             clip = VideoFileClip(base_clip)
-            synthesizer.export_for_platform(clip, platform, output_path)
-            clip.close()
-            outputs[platform] = output_path
+            try:
+                synthesizer.export_for_platform(clip, platform, output_path)
+                outputs[platform] = output_path
+            finally:
+                clip.close()
 
         # Update progress: Finalizing
         current_task.update_state(
@@ -139,8 +144,8 @@ def synthesize_video_task(
                     project.project_metadata = {}
                 project.project_metadata["error"] = str(e)
                 db.commit()
-        except Exception:
-            pass
+        except Exception as inner_e:
+            logger.error(f"Failed to update project error status: {inner_e}")
 
         # Update task state
         current_task.update_state(

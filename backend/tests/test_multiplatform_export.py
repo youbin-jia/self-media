@@ -24,8 +24,7 @@ class TestMultiPlatformExport:
         config = VideoSynthesizer.PLATFORM_CONFIGS["vertical"]
         assert config["resolution"] == (1080, 1920)
 
-    @pytest.mark.asyncio
-    async def test_export_for_platform_horizontal(self, tmp_path):
+    def test_export_for_platform_horizontal(self, tmp_path):
         """测试导出横屏格式"""
         mock_clip = Mock()
         mock_clip.size = (1920, 1080)
@@ -43,8 +42,7 @@ class TestMultiPlatformExport:
         mock_clip.write_videofile.assert_called_once()
         assert result == output_path
 
-    @pytest.mark.asyncio
-    async def test_export_for_platform_vertical(self, tmp_path):
+    def test_export_for_platform_vertical(self, tmp_path):
         """测试导出竖屏格式"""
         mock_clip = Mock()
         mock_clip.size = (1920, 1080)
@@ -66,8 +64,7 @@ class TestMultiPlatformExport:
             mock_adapt.assert_called_once_with(mock_clip, 1080, 1920)
             assert result == output_path
 
-    @pytest.mark.asyncio
-    async def test_adapt_aspect_ratio_wider_source(self):
+    def test_adapt_aspect_ratio_wider_source(self):
         """测试宽屏源适配到竖屏"""
         mock_clip = Mock()
         mock_clip.w = 1920
@@ -81,8 +78,7 @@ class TestMultiPlatformExport:
         # Should crop horizontally
         mock_clip.crop.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_adapt_aspect_ratio_taller_source(self):
+    def test_adapt_aspect_ratio_taller_source(self):
         """测试竖屏源适配到横屏"""
         mock_clip = Mock()
         mock_clip.w = 1080
@@ -100,8 +96,7 @@ class TestMultiPlatformExport:
 class TestMultiPlatformTask:
     """测试多平台Celery任务"""
 
-    @pytest.mark.asyncio
-    async def test_synthesize_multiplatform_task(self):
+    def test_synthesize_multiplatform_task(self):
         """测试多平台合成任务"""
         from app.tasks.video_tasks import synthesize_video_task
 

@@ -121,7 +121,7 @@ async def get_task_status(task_id: str):
     elif task_result.status == "FAILURE":
         response.message = "Task failed"
         response.result = {
-            "error": str(task_result.info) if task_result.info else "Unknown error"
+            "error": "An error occurred during video synthesis. Please check logs for details."
         }
 
     else:
