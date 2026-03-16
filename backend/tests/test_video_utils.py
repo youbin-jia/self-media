@@ -1,0 +1,457 @@
+# backend/tests/test_video_utils.py
+import pytest
+import numpy as np
+from unittest.mock import Mock, patch, MagicMock
+from pathlib import Path
+from app.utils.video_utils import VideoProcessor
+
+
+class TestVideoProcessor:
+    """测试视频处理工具"""
+
+    @pytest.mark.asyncio
+    async def test_add_fade_transition(self):
+        """测试淡入淡出转场"""
+        mock_clip1 = Mock()
+        mock_clip1.duration = 10.0
+        mock_clip2 = Mock()
+
+        with patch('app.utils.video_utils.fadeout') as mock_fadeout:
+            with patch('app.utils.video_utils.fadein') as mock_fadein:
+                with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+                    mock_fadeout.return_value = mock_clip1
+                    mock_fadein.return_value = mock_clip2
+                    mock_composite.return_value = Mock()
+
+                    processor = VideoProcessor()
+                    result = processor.add_transition(
+                        mock_clip1,
+                        mock_clip2,
+                        transition_type="fade",
+                        duration=1.0
+                    )
+
+                    mock_fadeout.assert_called_once_with(mock_clip1, 1.0)
+                    mock_fadein.assert_called_once_with(mock_clip2, 1.0)
+
+    @pytest.mark.asyncio
+    async def test_add_ken_burns_effect(self):
+        """测试Ken Burns效果"""
+        mock_clip = Mock()
+        mock_clip.duration = 5.0
+        mock_clip.w = 1920
+        mock_clip.h = 1080
+        mock_clip.get_frame = Mock(return_value=[[0] * 1920 for _ in range(1080)])
+
+        with patch('PIL.Image.fromarray') as mock_img:
+            with patch('PIL.Image.LANCZOS'):
+                mock_img_instance = Mock()
+                mock_img.return_value = mock_img_instance
+                mock_img_instance.resize.return_value = mock_img_instance
+                mock_img_instance.__array__ = Mock()
+
+                processor = VideoProcessor()
+                result = processor.add_ken_burns_effect(
+                    mock_clip,
+                    zoom_start=1.0,
+                    zoom_end=1.2
+                )
+
+                assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_add_color_grading_cinematic(self):
+        """测试电影感调色"""
+        import numpy as np
+
+        mock_clip = Mock()
+        mock_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+        mock_clip.get_frame = Mock(return_value=mock_frame)
+
+        with patch('PIL.Image.fromarray') as mock_img:
+            mock_img_instance = Mock()
+            mock_img.return_value = mock_img_instance
+            mock_img_instance.point.return_value = mock_img_instance
+            mock_img_instance.__array__ = Mock()
+
+            processor = VideoProcessor()
+            result = processor.add_color_grading(mock_clip, preset="cinematic")
+
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_add_color_grading_warm(self):
+        """测试暖色调调色"""
+        import numpy as np
+
+        mock_clip = Mock()
+        mock_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+        mock_clip.get_frame = Mock(return_value=mock_frame)
+        mock_clip.fl_image = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(mock_clip, preset="warm")
+
+        mock_clip.fl_image.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adapt_aspect_ratio_same_ratio(self):
+        """测试相同宽高比适配"""
+        mock_clip = Mock()
+        mock_clip.size = (1920, 1080)  # 16:9
+        mock_clip.w = 1920
+        mock_clip.h = 1080
+        mock_clip.resize = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor._adapt_aspect_ratio(mock_clip, 1920, 1080)
+
+        mock_clip.resize.assert_called_once_with((1920, 1080))
+
+    @pytest.mark.asyncio
+    async def test_adapt_aspect_ratio_crop_horizontal(self):
+        """测试横向裁剪"""
+        mock_clip = Mock()
+        mock_clip.size = (2560, 1080)  # 更宽
+        mock_clip.w = 2560
+        mock_clip.h = 1080
+        mock_clip.crop = Mock(return_value=mock_clip)
+        mock_clip.resize = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor._adapt_aspect_ratio(mock_clip, 1920, 1080)
+
+        # Should crop horizontally
+        mock_clip.crop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_adapt_aspect_ratio_crop_vertical(self):
+        """测试纵向裁剪"""
+        mock_clip = Mock()
+        mock_clip.size = (1920, 1440)  # 更高
+        mock_clip.w = 1920
+        mock_clip.h = 1440
+        mock_clip.crop = Mock(return_value=mock_clip)
+        mock_clip.resize = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor._adapt_aspect_ratio(mock_clip, 1920, 1080)
+
+        # Should crop vertically
+        mock_clip.crop.assert_called_once()
+
+    def test_add_color_grading_cool(self):
+        """测试冷色调调色"""
+        import numpy as np
+
+        mock_clip = Mock()
+        mock_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+        mock_clip.get_frame = Mock(return_value=mock_frame)
+        mock_clip.fl_image = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(mock_clip, preset="cool")
+
+        mock_clip.fl_image.assert_called_once()
+
+    def test_add_color_grading_no_preset(self):
+        """测试无预设调色"""
+        import numpy as np
+
+        mock_clip = Mock()
+        mock_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+        mock_clip.get_frame = Mock(return_value=mock_frame)
+        mock_clip.fl_image = Mock(return_value=mock_clip)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(mock_clip, preset="unknown")
+
+        mock_clip.fl_image.assert_called_once()
+
+    def test_add_transition_crossfade(self):
+        """测试交叉淡入淡出转场"""
+        mock_clip1 = Mock()
+        mock_clip1.duration = 10.0
+        mock_clip1.fadeout = Mock(return_value=mock_clip1)
+        mock_clip2 = Mock()
+        mock_clip2.fadein = Mock(return_value=mock_clip2)
+        mock_clip2.crossfadein = Mock(return_value=mock_clip2)
+        mock_clip2.set_start = Mock(return_value=mock_clip2)
+
+        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+            mock_composite.return_value = Mock()
+
+            processor = VideoProcessor()
+            result = processor.add_transition(
+                mock_clip1,
+                mock_clip2,
+                transition_type="crossfade",
+                duration=1.0
+            )
+
+            mock_clip1.fadeout.assert_called_once_with(1.0)
+            mock_clip2.fadein.assert_called_once()
+
+    def test_add_transition_wipe(self):
+        """测试擦除转场"""
+        mock_clip1 = Mock()
+        mock_clip1.w = 1920
+        mock_clip1.get_frame = Mock(return_value=np.zeros((1080, 1920, 3), dtype=np.uint8))
+        mock_clip2 = Mock()
+        mock_clip2.get_frame = Mock(return_value=np.ones((1080, 1920, 3), dtype=np.uint8))
+
+        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+            mock_composite.return_value = Mock()
+
+            processor = VideoProcessor()
+            result = processor.add_transition(
+                mock_clip1,
+                mock_clip2,
+                transition_type="wipe",
+                duration=1.0
+            )
+
+            mock_composite.assert_called_once()
+
+    def test_add_transition_none(self):
+        """测试无转场"""
+        mock_clip1 = Mock()
+        mock_clip1.duration = 10.0
+        mock_clip2 = Mock()
+        mock_clip2.set_start = Mock(return_value=mock_clip2)
+
+        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+            mock_composite.return_value = Mock()
+
+            processor = VideoProcessor()
+            result = processor.add_transition(
+                mock_clip1,
+                mock_clip2,
+                transition_type="none",
+                duration=1.0
+            )
+
+            mock_clip2.set_start.assert_called_once_with(mock_clip1.duration)
+            mock_composite.assert_called_once()
+
+    def test_add_ken_burns_effect_directions(self):
+        """测试Ken Burns效果的不同方向"""
+        import numpy as np
+
+        for direction in ["center", "left", "right", "unknown"]:
+            mock_clip = Mock()
+            mock_clip.duration = 5.0
+            mock_clip.w = 1920
+            mock_clip.h = 1080
+            test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+            mock_clip.get_frame = Mock(return_value=test_frame)
+            mock_clip.fl = Mock(return_value=mock_clip)
+
+            processor = VideoProcessor()
+            result = processor.add_ken_burns_effect(
+                mock_clip,
+                zoom_start=1.0,
+                zoom_end=1.2,
+                direction=direction
+            )
+
+            assert result == mock_clip
+            mock_clip.fl.assert_called_once()
+
+    def test_add_text_overlay(self):
+        """测试文字叠加"""
+        mock_clip = Mock()
+        mock_clip.duration = 5.0
+
+        with patch('moviepy.video.VideoClip.TextClip') as mock_textclip:
+            with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+                mock_txt = Mock()
+                mock_txt.set_position = Mock(return_value=mock_txt)
+                mock_txt.set_duration = Mock(return_value=mock_txt)
+                mock_textclip.return_value = mock_txt
+                mock_composite.return_value = Mock()
+
+                processor = VideoProcessor()
+                result = processor.add_text_overlay(
+                    mock_clip,
+                    text="Test Text",
+                    position=("center", "bottom"),
+                    fontsize=50,
+                    color="white",
+                    duration=3.0
+                )
+
+                mock_textclip.assert_called_once()
+                mock_txt.set_position.assert_called_once_with(("center", "bottom"))
+                mock_txt.set_duration.assert_called_once_with(3.0)
+                mock_composite.assert_called_once()
+
+    def test_add_text_overlay_default_duration(self):
+        """测试文字叠加（默认时长）"""
+        mock_clip = Mock()
+        mock_clip.duration = 5.0
+
+        with patch('moviepy.video.VideoClip.TextClip') as mock_textclip:
+            with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+                mock_txt = Mock()
+                mock_txt.set_position = Mock(return_value=mock_txt)
+                mock_txt.set_duration = Mock(return_value=mock_txt)
+                mock_textclip.return_value = mock_txt
+                mock_composite.return_value = Mock()
+
+                processor = VideoProcessor()
+                result = processor.add_text_overlay(
+                    mock_clip,
+                    text="Test Text"
+                )
+
+                mock_txt.set_duration.assert_called_once_with(5.0)
+
+
+class TestVideoProcessorIntegration:
+    """Integration tests for video processing with actual execution"""
+
+    def test_color_grading_warm_actual(self):
+        """测试实际暖色调调色执行"""
+        from moviepy.editor import VideoClip
+
+        # Create a test frame
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(clip, preset="warm")
+
+        # Verify the clip was modified
+        assert result is not None
+        # Get a frame to trigger the color grading function
+        graded_frame = result.get_frame(0)
+        assert graded_frame.shape == test_frame.shape
+
+    def test_color_grading_cool_actual(self):
+        """测试实际冷色调调色执行"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(clip, preset="cool")
+
+        assert result is not None
+        graded_frame = result.get_frame(0)
+        assert graded_frame.shape == test_frame.shape
+
+    def test_color_grading_cinematic_actual(self):
+        """测试实际电影感调色执行"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(clip, preset="cinematic")
+
+        assert result is not None
+        graded_frame = result.get_frame(0)
+        assert graded_frame.shape == test_frame.shape
+
+    def test_color_grading_default_actual(self):
+        """测试实际无预设调色执行"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_color_grading(clip, preset="unknown")
+
+        assert result is not None
+        graded_frame = result.get_frame(0)
+        assert graded_frame.shape == test_frame.shape
+
+    def test_ken_burns_actual_execution(self):
+        """测试实际Ken Burns效果执行"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame.copy()
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_ken_burns_effect(
+            clip,
+            zoom_start=1.0,
+            zoom_end=1.2,
+            direction="center"
+        )
+
+        assert result is not None
+        # Get a frame to trigger the Ken Burns effect
+        zoomed_frame = result.get_frame(0.5)
+        assert zoomed_frame.shape == test_frame.shape
+
+    def test_ken_burns_direction_left(self):
+        """测试Ken Burns效果左方向"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame.copy()
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_ken_burns_effect(
+            clip,
+            zoom_start=1.0,
+            zoom_end=1.2,
+            direction="left"
+        )
+
+        assert result is not None
+        zoomed_frame = result.get_frame(0.5)
+        assert zoomed_frame.shape == test_frame.shape
+
+    def test_ken_burns_direction_right(self):
+        """测试Ken Burns效果右方向"""
+        from moviepy.editor import VideoClip
+
+        test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
+
+        def make_frame(t):
+            return test_frame.copy()
+
+        clip = VideoClip(make_frame, duration=1)
+
+        processor = VideoProcessor()
+        result = processor.add_ken_burns_effect(
+            clip,
+            zoom_start=1.0,
+            zoom_end=1.2,
+            direction="right"
+        )
+
+        assert result is not None
+        zoomed_frame = result.get_frame(0.5)
+        assert zoomed_frame.shape == test_frame.shape
