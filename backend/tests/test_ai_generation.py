@@ -257,3 +257,42 @@ class TestAIGenerationManager:
         manager1 = get_manager()
         manager2 = get_manager()
         assert manager1 is manager2
+
+    def test_list_providers(self):
+        """测试列出所有Provider及其能力"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+        provider = DALLEProvider(api_key="test_key")
+        manager.register_provider("test_provider", provider)
+
+        providers = manager.list_providers()
+
+        assert "test_provider" in providers
+        assert providers["test_provider"]["provider"] == "dalle"
+        assert providers["test_provider"]["capabilities"] == ["image_generation"]
+
+    @pytest.mark.asyncio
+    async def test_generate_music_through_manager(self):
+        """测试通过管理器生成音乐（DALL-E不支持但委托机制应工作）"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+        provider = DALLEProvider(api_key="test_key")
+        manager.register_provider("test", provider)
+
+        result = await manager.generate_music(
+            "test",
+            script_context={"title": "Test video"},
+            duration=30.0,
+            mood="auto"
+        )
+
+        # DALL-E doesn't support music, so it should return not supported error
+        assert result["success"] is False
+        assert "DALL-E does not support music generation" in result["error"]
+        assert result["provider"] == "dalle"
