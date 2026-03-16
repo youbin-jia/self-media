@@ -458,6 +458,95 @@ class QualityDetector:
         """
         return sum(s.duration for s in segments)
 
+    async def detect_audio_quality(
+        self,
+        audio_path: str
+    ) -> Dict[str, Any]:
+        """
+        检测音频质量
+        Args:
+            audio_path: 音频文件路径
+        Returns:
+            质量报告
+        """
+        import librosa
+
+        # 加载音频
+        y, sr = librosa.load(audio_path)
+
+        # 计算指标
+        duration = len(y) / sr
+        rms = librosa.feature.rms(y=y)[0]
+        avg_volume = float(rms.mean())
+
+        # 检测静音段
+        silence_ratio = 1 - (len(librosa.effects.split(y, top_db=20)) / (len(y) / sr))
+
+        # 评分
+        score = 0.0
+        issues = []
+
+        # 音量评分 (30分)
+        if 0.01 <= avg_volume <= 0.3:
+            volume_score = 30
+        elif 0.005 <= avg_volume <= 0.5:
+            volume_score = 20
+        else:
+            volume_score = 10
+            issues.append({
+                "type": "volume",
+                "message": f"音量异常: {avg_volume:.3f}"
+            })
+        score += volume_score
+
+        # 清晰度评分 (40分) - 基于信噪比估计
+        clarity_score = min(40, silence_ratio * 40)
+        score += clarity_score
+
+        # 时长合理性 (30分)
+        if duration >= 30:  # 至少30秒
+            duration_score = 30
+        elif duration >= 10:
+            duration_score = 20
+        else:
+            duration_score = 10
+            issues.append({
+                "type": "duration",
+                "message": f"音频时长过短: {duration:.1f}秒"
+            })
+        score += duration_score
+
+        overall_score = Decimal(str(score)).quantize(Decimal("0.01"))
+        grade = self._calculate_grade(overall_score)
+
+        return {
+            "overall_score": overall_score,
+            "grade": grade,
+            "metrics": {
+                "duration": duration,
+                "average_volume": avg_volume,
+                "silence_ratio": silence_ratio,
+                "sample_rate": sr
+            },
+            "issues": issues,
+            "recommendations": self._generate_audio_recommendations(grade, issues)
+        }
+
+    def _generate_audio_recommendations(self, grade: str, issues: List[Dict[str, Any]]) -> List[str]:
+        """生成音频质量改进建议"""
+        recommendations = []
+
+        for issue in issues:
+            if issue["type"] == "volume":
+                recommendations.append("建议调整音频音量至正常范围")
+            elif issue["type"] == "duration":
+                recommendations.append("建议增加音频时长以保证内容完整性")
+
+        if grade in ["D", "E"]:
+            recommendations.append("音频质量较低，建议重新录制或使用专业音频处理工具优化")
+
+        return recommendations
+
 
 # Singleton instance
 _quality_detector_instance = None

@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = "claude"
     LLM_FALLBACK_ENABLED: bool = True
 
+    # Azure Speech
+    AZURE_SPEECH_KEY: Optional[str] = None
+    AZURE_SPEECH_REGION: Optional[str] = None
+
+    # ElevenLabs
+    ELEVENLABS_API_KEY: Optional[str] = None
+
+    # TTS配置
+    DEFAULT_TTS_PROVIDER: str = "azure"
+
     # App Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"
     API_KEY: str = "your-api-key-change-in-production"
