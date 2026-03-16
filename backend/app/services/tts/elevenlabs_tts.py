@@ -2,6 +2,7 @@
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import httpx
+import re
 from .base import BaseTTSProvider
 
 
@@ -56,12 +57,20 @@ class ElevenLabsTTSProvider(BaseTTSProvider):
             if response.status_code != 200:
                 # Sanitize error message to avoid exposing API keys
                 error_msg = response.text
-                # Remove common patterns that might contain API keys
-                if "api_key" in error_msg.lower() or "authorization" in error_msg.lower():
-                    error_msg = f"API error (status {response.status_code}): Authentication or authorization error"
-                else:
-                    # Truncate long error messages
-                    error_msg = error_msg[:200] if len(error_msg) > 200 else error_msg
+
+                # Use regex patterns to detect and redact actual API keys
+                # Pattern 1: OpenAI-style keys (sk-...)
+                error_msg = re.sub(r'sk-[a-zA-Z0-9]{20,}', '[REDACTED]', error_msg)
+                # Pattern 2: Generic key patterns (key=..., key: ..., "key": "...", etc.)
+                error_msg = re.sub(r'key[=:\s]+[a-zA-Z0-9]{10,}', 'key=[REDACTED]', error_msg, flags=re.IGNORECASE)
+                # Pattern 3: API key in JSON format ("api_key": "...")
+                error_msg = re.sub(r'["\']api[_-]?key["\'][\s]*:[\s]*["\'][a-zA-Z0-9]{10,}["\']', '"api_key": "[REDACTED]"', error_msg, flags=re.IGNORECASE)
+                # Pattern 4: Authorization tokens (Bearer ..., token=..., etc.)
+                error_msg = re.sub(r'(bearer|token)[=:\s]+[a-zA-Z0-9]{10,}', r'\1=[REDACTED]', error_msg, flags=re.IGNORECASE)
+
+                # Truncate long error messages
+                error_msg = error_msg[:200] if len(error_msg) > 200 else error_msg
+
                 raise RuntimeError(f"ElevenLabs API error: {error_msg}")
 
             # 保存音频文件
