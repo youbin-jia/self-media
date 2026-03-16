@@ -1,9 +1,11 @@
 # backend/tests/test_ai_generation.py
 import pytest
+import threading
 import httpx
 from unittest.mock import Mock, AsyncMock, patch
 from app.services.ai_generation.base import AIGenerationProvider
 from app.services.ai_generation.dalle_provider import DALLEProvider
+from app.services.ai_generation import AIGenerationManager, get_manager
 
 
 class TestAIGenerationProvider:
@@ -153,3 +155,105 @@ class TestDALLEProvider:
         """测试支持的能力"""
         provider = DALLEProvider(api_key="test_key")
         assert "image_generation" in provider.capabilities
+
+
+class TestAIGenerationManager:
+    """测试AI生成管理器"""
+
+    def test_manager_is_singleton(self):
+        """测试管理器是单例"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager1 = AIGenerationManager()
+        manager2 = AIGenerationManager()
+        assert manager1 is manager2
+
+    def test_manager_initializes_configured_providers(self):
+        """测试管理器自动初始化配置的providers"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+        # Just verify the manager exists and has providers dict
+        assert hasattr(manager, '_providers')
+        assert isinstance(manager._providers, dict)
+
+    def test_register_and_get_provider(self):
+        """测试注册和获取provider"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+        provider = DALLEProvider(api_key="test_key")
+
+        manager.register_provider("test_dalle", provider)
+        retrieved = manager.get_provider("test_dalle")
+
+        assert retrieved is provider
+
+    def test_get_nonexistent_provider_raises_error(self):
+        """测试获取不存在的provider抛出错误"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+
+        with pytest.raises(ValueError, match="Provider 'nonexistent' not found"):
+            manager.get_provider("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_generate_image_through_manager(self):
+        """测试通过管理器生成图像"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        manager = AIGenerationManager()
+
+        with patch('app.services.ai_generation.dalle_provider.AsyncOpenAI') as mock_client_class:
+            mock_instance = AsyncMock()
+            mock_client_class.return_value = mock_instance
+
+            mock_response = Mock()
+            mock_response.data = [Mock(url="https://example.com/image.png")]
+            mock_instance.images.generate = AsyncMock(return_value=mock_response)
+
+            with patch('httpx.AsyncClient') as mock_async_client:
+                mock_response_get = AsyncMock()
+                mock_response_get.content = b"fake_image_data"
+                mock_response_get.raise_for_status = Mock()
+
+                mock_async_client.return_value.__aenter__.return_value.get = AsyncMock(
+                    return_value=mock_response_get
+                )
+
+                provider = DALLEProvider(api_key="test_key")
+                manager.register_provider("test", provider)
+
+                result = await manager.generate_image(
+                    "test",
+                    "Test prompt",
+                    style="realistic",
+                    size=(1024, 1024)
+                )
+
+                assert result["success"] is True
+
+    def test_get_manager_function(self):
+        """测试全局获取函数"""
+        # Reset singleton state for testing
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+
+        # Reset the module-level singleton
+        import app.services.ai_generation as ai_gen_module
+        ai_gen_module._manager_instance = None
+
+        manager1 = get_manager()
+        manager2 = get_manager()
+        assert manager1 is manager2
