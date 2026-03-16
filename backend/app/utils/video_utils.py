@@ -1,11 +1,15 @@
 # backend/app/utils/video_utils.py
 """Video Processing Utilities with Transitions and Effects"""
+import logging
 from typing import List, Dict, Any, Optional
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ColorClip
 from moviepy.video.fx.fadein import fadein
 from moviepy.video.fx.fadeout import fadeout
 from moviepy.video.fx.resize import resize
 import numpy as np
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 class VideoProcessor:
@@ -27,42 +31,72 @@ class VideoProcessor:
             duration: 转场时长(秒)
         Returns:
             合成后的视频
+        Raises:
+            ValueError: If duration is invalid or clips are invalid
         """
-        if transition_type == "fade":
-            # 淡入淡出
-            clip1 = fadeout(clip1, duration)
-            clip2 = fadein(clip2, duration)
-            return CompositeVideoClip([clip1, clip2.set_start(clip1.duration - duration)])
+        # Validate parameters
+        if duration <= 0:
+            raise ValueError(f"Transition duration must be positive, got {duration}")
 
-        elif transition_type == "crossfade":
-            # 交叉淡入淡出
-            clip1 = clip1.fadeout(duration)
-            clip2 = clip2.fadein(duration)
-            return CompositeVideoClip([
-                clip1,
-                clip2.set_start(clip1.duration - duration).crossfadein(duration)
-            ])
+        if clip1 is None or clip2 is None:
+            raise ValueError("Both clips must be provided for transition")
 
-        elif transition_type == "wipe":
-            # 擦除转场
-            def make_wipe_frame(t):
-                """生成擦除帧"""
-                progress = t / duration
-                w = clip1.w
+        if clip1.duration is None or clip2.duration is None:
+            raise ValueError("Both clips must have valid duration")
 
-                def get_frame(get_frame_func):
+        if duration >= clip1.duration:
+            logger.warning(f"Transition duration {duration}s >= clip1 duration {clip1.duration}s, adjusting")
+            duration = min(duration, clip1.duration * 0.5, clip2.duration * 0.5)
+
+        try:
+            if transition_type == "fade":
+                # 淡入淡出
+                clip1_faded = fadeout(clip1, duration)
+                clip2_faded = fadein(clip2, duration)
+                return CompositeVideoClip([clip1_faded, clip2_faded.set_start(clip1.duration - duration)])
+
+            elif transition_type == "crossfade":
+                # 交叉淡入淡出
+                clip1_faded = fadeout(clip1, duration)
+                clip2_faded = fadein(clip2, duration)
+                # Use crossfade by setting opacity
+                clip2_crossfaded = clip2_faded.set_start(clip1.duration - duration).set_opacity(lambda t: t / duration)
+                return CompositeVideoClip([clip1_faded, clip2_crossfaded])
+
+            elif transition_type == "wipe":
+                # 擦除转场 - implement proper wipe effect
+                def make_wipe_frame(get_frame1, get_frame2, w, d):
                     def frame(t):
-                        frame1 = clip1.get_frame(t)
-                        frame2 = clip2.get_frame(t)
-                        x = int(w * progress)
+                        progress = t / d
+                        frame1 = get_frame1(t)
+                        frame2 = get_frame2(t)
+                        x = int(w * min(progress, 1.0))
+                        # Ensure we don't exceed frame dimensions
+                        x = min(x, w - 1)
                         return np.hstack([frame1[:, :x], frame2[:, x:]])
                     return frame
-                return get_frame
 
-            return CompositeVideoClip([clip1, clip2], duration=duration)
+                # Create a custom video clip with the wipe effect
+                from moviepy.video.VideoClip import VideoClip
+                wipe_duration = duration
+                wipe_clip = VideoClip(
+                    lambda t: make_wipe_frame(
+                        clip1.get_frame,
+                        clip2.get_frame,
+                        clip1.w,
+                        wipe_duration
+                    )(t),
+                    duration=wipe_duration
+                )
+                return wipe_clip
 
-        else:
-            # 无转场
+            else:
+                # 无转场 - simple concatenation
+                return CompositeVideoClip([clip1, clip2.set_start(clip1.duration)])
+
+        except Exception as e:
+            logger.error(f"Failed to create {transition_type} transition: {e}")
+            # Fallback to simple concatenation
             return CompositeVideoClip([clip1, clip2.set_start(clip1.duration)])
 
     @staticmethod
@@ -81,37 +115,75 @@ class VideoProcessor:
             direction: 缩放方向 (center, left, right)
         Returns:
             添加效果后的视频
+        Raises:
+            ValueError: If parameters are invalid
         """
+        # Validate parameters
+        if zoom_start <= 0 or zoom_end <= 0:
+            raise ValueError(f"Zoom values must be positive, got start={zoom_start}, end={zoom_end}")
+
+        if clip is None or clip.duration is None or clip.duration <= 0:
+            raise ValueError("Clip must have valid positive duration")
+
         def make_frame(t):
             """动态缩放帧"""
-            progress = t / clip.duration
-            zoom = zoom_start + (zoom_end - zoom_start) * progress
+            try:
+                # Avoid division by zero
+                if clip.duration == 0:
+                    progress = 0
+                else:
+                    progress = t / clip.duration
 
-            frame = clip.get_frame(t)
-            h, w = frame.shape[:2]
+                zoom = zoom_start + (zoom_end - zoom_start) * progress
 
-            # 计算缩放后的尺寸
-            new_h, new_w = int(h / zoom), int(w / zoom)
+                # Prevent zero or negative zoom
+                if zoom <= 0:
+                    zoom = 1.0
 
-            # 根据方向确定裁剪位置
-            if direction == "center":
-                y = (h - new_h) // 2
-                x = (w - new_w) // 2
-            elif direction == "left":
-                y = (h - new_h) // 2
-                x = 0
-            elif direction == "right":
-                y = (h - new_h) // 2
-                x = w - new_w
-            else:
-                y, x = 0, 0
+                frame = clip.get_frame(t)
+                h, w = frame.shape[:2]
 
-            # 裁剪并缩放
-            cropped = frame[y:y+new_h, x:x+new_w]
-            from PIL import Image
-            img = Image.fromarray(cropped)
-            img = img.resize((w, h), Image.LANCZOS)
-            return np.array(img)
+                # 计算缩放后的尺寸
+                new_h = max(1, int(h / zoom))
+                new_w = max(1, int(w / zoom))
+
+                # 根据方向确定裁剪位置
+                if direction == "center":
+                    y = max(0, (h - new_h) // 2)
+                    x = max(0, (w - new_w) // 2)
+                elif direction == "left":
+                    y = max(0, (h - new_h) // 2)
+                    x = 0
+                elif direction == "right":
+                    y = max(0, (h - new_h) // 2)
+                    x = max(0, w - new_w)
+                else:
+                    logger.warning(f"Unknown direction '{direction}', using center")
+                    y = max(0, (h - new_h) // 2)
+                    x = max(0, (w - new_w) // 2)
+
+                # Ensure crop region is within bounds
+                y = min(y, h - new_h)
+                x = min(x, w - new_w)
+                y = max(0, y)
+                x = max(0, x)
+
+                # 裁剪并缩放
+                cropped = frame[y:y+new_h, x:x+new_w]
+
+                # Validate cropped frame
+                if cropped.size == 0:
+                    logger.warning("Empty crop region, returning original frame")
+                    return frame
+
+                img = Image.fromarray(cropped)
+                img = img.resize((w, h), Image.LANCZOS)
+                return np.array(img)
+
+            except Exception as e:
+                logger.error(f"Error in Ken Burns effect at t={t}: {e}")
+                # Return original frame on error
+                return clip.get_frame(t)
 
         return clip.fl(lambda gf, t: make_frame(t), apply_to=[])
 
@@ -130,29 +202,36 @@ class VideoProcessor:
         """
         def apply_color_grading(frame):
             """应用调色"""
-            if preset == "cinematic":
-                # 电影感：降低饱和度，增加对比度
-                from PIL import Image
-                img = Image.fromarray(frame)
-                img = img.point(lambda p: p * 1.1 if p > 128 else p * 0.9)
-                return np.array(img)
+            try:
+                if preset == "cinematic":
+                    # 电影感：降低饱和度，增加对比度
+                    img = Image.fromarray(frame)
+                    img = img.point(lambda p: p * 1.1 if p > 128 else p * 0.9)
+                    return np.array(img)
 
-            elif preset == "warm":
-                # 暖色调：增加红色和黄色
-                frame = frame.astype(np.float32)
-                frame[:, :, 0] = frame[:, :, 0] * 1.1  # R
-                frame[:, :, 1] = frame[:, :, 1] * 1.05  # G
-                frame = np.clip(frame, 0, 255).astype(np.uint8)
+                elif preset == "warm":
+                    # 暖色调：增加红色和黄色
+                    frame = frame.astype(np.float32)
+                    frame[:, :, 0] = frame[:, :, 0] * 1.1  # R
+                    frame[:, :, 1] = frame[:, :, 1] * 1.05  # G
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                    return frame
+
+                elif preset == "cool":
+                    # 冷色调：增加蓝色
+                    frame = frame.astype(np.float32)
+                    frame[:, :, 2] = frame[:, :, 2] * 1.15  # B
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                    return frame
+
+                else:
+                    # Unknown preset, return original
+                    logger.warning(f"Unknown color grading preset '{preset}', no effect applied")
+                    return frame
+
+            except Exception as e:
+                logger.error(f"Error applying color grading preset '{preset}': {e}")
                 return frame
-
-            elif preset == "cool":
-                # 冷色调：增加蓝色
-                frame = frame.astype(np.float32)
-                frame[:, :, 2] = frame[:, :, 2] * 1.15  # B
-                frame = np.clip(frame, 0, 255).astype(np.uint8)
-                return frame
-
-            return frame
 
         return clip.fl_image(apply_color_grading)
 
@@ -223,14 +302,28 @@ class VideoProcessor:
         Returns:
             添加文字后的视频
         """
-        from moviepy.video.VideoClip import TextClip
+        try:
+            from moviepy.video.VideoClip import TextClip
 
-        txt = TextClip(
-            text,
-            fontsize=fontsize,
-            color=color,
-            font="Arial-Unicode-MS"
-        )
+            # Validate parameters
+            if not text:
+                logger.warning("Empty text provided for overlay")
+                return CompositeVideoClip([clip])
 
-        txt = txt.set_position(position).set_duration(duration or clip.duration)
-        return CompositeVideoClip([clip, txt])
+            if fontsize <= 0:
+                raise ValueError(f"Fontsize must be positive, got {fontsize}")
+
+            txt = TextClip(
+                text,
+                fontsize=fontsize,
+                color=color,
+                font="Arial-Unicode-MS"
+            )
+
+            txt = txt.set_position(position).set_duration(duration or clip.duration)
+            return CompositeVideoClip([clip, txt])
+
+        except Exception as e:
+            logger.error(f"Failed to add text overlay: {e}")
+            # Return original clip on error
+            return CompositeVideoClip([clip])

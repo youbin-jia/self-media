@@ -172,36 +172,39 @@ class TestVideoProcessor:
         """测试交叉淡入淡出转场"""
         mock_clip1 = Mock()
         mock_clip1.duration = 10.0
-        mock_clip1.fadeout = Mock(return_value=mock_clip1)
         mock_clip2 = Mock()
-        mock_clip2.fadein = Mock(return_value=mock_clip2)
-        mock_clip2.crossfadein = Mock(return_value=mock_clip2)
-        mock_clip2.set_start = Mock(return_value=mock_clip2)
+        mock_clip2.duration = 10.0
 
-        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
-            mock_composite.return_value = Mock()
+        with patch('app.utils.video_utils.fadeout') as mock_fadeout:
+            with patch('app.utils.video_utils.fadein') as mock_fadein:
+                with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
+                    mock_fadeout.return_value = mock_clip1
+                    mock_fadein.return_value = mock_clip2
+                    mock_composite.return_value = Mock()
 
-            processor = VideoProcessor()
-            result = processor.add_transition(
-                mock_clip1,
-                mock_clip2,
-                transition_type="crossfade",
-                duration=1.0
-            )
+                    processor = VideoProcessor()
+                    result = processor.add_transition(
+                        mock_clip1,
+                        mock_clip2,
+                        transition_type="crossfade",
+                        duration=1.0
+                    )
 
-            mock_clip1.fadeout.assert_called_once_with(1.0)
-            mock_clip2.fadein.assert_called_once()
+                    mock_fadeout.assert_called_once_with(mock_clip1, 1.0)
+                    mock_fadein.assert_called_once_with(mock_clip2, 1.0)
 
     def test_add_transition_wipe(self):
         """测试擦除转场"""
         mock_clip1 = Mock()
+        mock_clip1.duration = 10.0
         mock_clip1.w = 1920
         mock_clip1.get_frame = Mock(return_value=np.zeros((1080, 1920, 3), dtype=np.uint8))
         mock_clip2 = Mock()
+        mock_clip2.duration = 10.0
         mock_clip2.get_frame = Mock(return_value=np.ones((1080, 1920, 3), dtype=np.uint8))
 
-        with patch('app.utils.video_utils.CompositeVideoClip') as mock_composite:
-            mock_composite.return_value = Mock()
+        with patch('moviepy.video.VideoClip.VideoClip') as mock_videoclip:
+            mock_videoclip.return_value = Mock()
 
             processor = VideoProcessor()
             result = processor.add_transition(
@@ -211,7 +214,8 @@ class TestVideoProcessor:
                 duration=1.0
             )
 
-            mock_composite.assert_called_once()
+            # Should create a VideoClip for wipe effect
+            mock_videoclip.assert_called_once()
 
     def test_add_transition_none(self):
         """测试无转场"""
@@ -306,6 +310,52 @@ class TestVideoProcessor:
                 )
 
                 mock_txt.set_duration.assert_called_once_with(5.0)
+
+    def test_add_transition_invalid_duration(self):
+        """测试无效转场时长"""
+        mock_clip1 = Mock()
+        mock_clip1.duration = 10.0
+        mock_clip2 = Mock()
+        mock_clip2.duration = 10.0
+
+        processor = VideoProcessor()
+        with pytest.raises(ValueError, match="Transition duration must be positive"):
+            processor.add_transition(mock_clip1, mock_clip2, duration=-1.0)
+
+    def test_add_transition_none_clips(self):
+        """测试空片段转场"""
+        processor = VideoProcessor()
+        with pytest.raises(ValueError, match="Both clips must be provided"):
+            processor.add_transition(None, Mock(), duration=1.0)
+
+    def test_add_transition_none_duration_clips(self):
+        """测试无时长片段转场"""
+        mock_clip1 = Mock()
+        mock_clip1.duration = None
+        mock_clip2 = Mock()
+        mock_clip2.duration = 10.0
+
+        processor = VideoProcessor()
+        with pytest.raises(ValueError, match="Both clips must have valid duration"):
+            processor.add_transition(mock_clip1, mock_clip2, duration=1.0)
+
+    def test_add_ken_burns_invalid_zoom(self):
+        """测试无效缩放值"""
+        mock_clip = Mock()
+        mock_clip.duration = 5.0
+
+        processor = VideoProcessor()
+        with pytest.raises(ValueError, match="Zoom values must be positive"):
+            processor.add_ken_burns_effect(mock_clip, zoom_start=0, zoom_end=1.2)
+
+    def test_add_ken_burns_invalid_duration(self):
+        """测试无效片段时长"""
+        mock_clip = Mock()
+        mock_clip.duration = 0
+
+        processor = VideoProcessor()
+        with pytest.raises(ValueError, match="Clip must have valid positive duration"):
+            processor.add_ken_burns_effect(mock_clip, zoom_start=1.0, zoom_end=1.2)
 
 
 class TestVideoProcessorIntegration:

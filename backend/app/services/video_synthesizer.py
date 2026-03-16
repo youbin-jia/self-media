@@ -1,12 +1,15 @@
 # backend/app/services/video_synthesizer.py
 """Video Synthesis Service with MoviePy"""
 import os
+import logging
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
 from moviepy.editor import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip
 
 from app.config import settings
 from app.utils.video_utils import VideoProcessor
+
+logger = logging.getLogger(__name__)
 
 
 class VideoSynthesizer:
@@ -92,7 +95,7 @@ class VideoSynthesizer:
                     clip = ImageClip(image_path, duration=5)
                     clips.append(clip)
                 except Exception as e:
-                    print(f"Warning: Failed to create clip from {image_path}: {e}")
+                    logger.warning(f"Failed to create clip from {image_path}: {e}")
                     continue
 
             # Update progress for each material processed
@@ -169,7 +172,7 @@ class VideoSynthesizer:
                 "error": str(e)
             }
 
-    async def synthesize_video(
+    def synthesize_video(
         self,
         project_id: str,
         materials: List[Dict[str, Any]],
@@ -266,7 +269,7 @@ class VideoSynthesizer:
                 clips.append(clip)
 
             except Exception as e:
-                print(f"Warning: Failed to process material {material_path}: {e}")
+                logger.warning(f"Failed to process material {material_path}: {e}")
                 continue
 
             # Update progress
@@ -281,54 +284,69 @@ class VideoSynthesizer:
             progress_callback(65, "Adding transitions...")
 
         # Add transitions between clips
-        if len(clips) > 1 and transition_type != "none":
-            final_clips = [clips[0]]
-            for i in range(1, len(clips)):
-                transition = self.processor.add_transition(
-                    final_clips[-1],
-                    clips[i],
-                    transition_type=transition_type,
-                    duration=1.0
-                )
-                final_clips.append(transition)
-            final_video = CompositeVideoClip(final_clips)
-        else:
-            # Concatenate without transitions
-            final_video = concatenate_videoclips(clips, method="compose")
+        final_video = None
+        try:
+            if len(clips) > 1 and transition_type != "none":
+                # Build concatenated video with transitions
+                # Start with first clip
+                current_video = clips[0]
 
-        if progress_callback:
-            progress_callback(75, "Adding audio...")
+                for i in range(1, len(clips)):
+                    # Add transition between current and next clip
+                    current_video = self.processor.add_transition(
+                        current_video,
+                        clips[i],
+                        transition_type=transition_type,
+                        duration=1.0
+                    )
 
-        # Add audio if provided
-        if audio_path and os.path.exists(audio_path):
-            try:
-                audio = AudioFileClip(audio_path)
-                # Adjust audio duration to match video
-                if audio.duration < final_video.duration:
-                    audio = audio.loop(duration=final_video.duration)
-                elif audio.duration > final_video.duration:
-                    audio = audio.subclip(0, final_video.duration)
-                final_video = final_video.set_audio(audio)
-            except Exception as e:
-                print(f"Warning: Failed to add audio: {e}")
+                final_video = current_video
+            else:
+                # Concatenate without transitions
+                final_video = concatenate_videoclips(clips, method="compose")
 
-        if progress_callback:
-            progress_callback(85, "Writing video file...")
+            if progress_callback:
+                progress_callback(75, "Adding audio...")
 
-        # Write output video
-        final_video.write_videofile(
-            str(output_path),
-            fps=fps,
-            codec="libx264",
-            audio_codec="aac",
-            verbose=False,
-            logger=None
-        )
+            # Add audio if provided
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    audio = AudioFileClip(audio_path)
+                    # Adjust audio duration to match video
+                    if audio.duration < final_video.duration:
+                        audio = audio.loop(duration=final_video.duration)
+                    elif audio.duration > final_video.duration:
+                        audio = audio.subclip(0, final_video.duration)
+                    final_video = final_video.set_audio(audio)
+                except Exception as e:
+                    logger.warning(f"Failed to add audio: {e}")
 
-        # Clean up
-        for clip in clips:
-            clip.close()
-        final_video.close()
+            if progress_callback:
+                progress_callback(85, "Writing video file...")
+
+            # Write output video
+            final_video.write_videofile(
+                str(output_path),
+                fps=fps,
+                codec="libx264",
+                audio_codec="aac",
+                verbose=False,
+                logger=None
+            )
+
+        finally:
+            # Clean up all clips to prevent resource leaks
+            for clip in clips:
+                try:
+                    clip.close()
+                except Exception as e:
+                    logger.debug(f"Error closing clip: {e}")
+
+            if final_video:
+                try:
+                    final_video.close()
+                except Exception as e:
+                    logger.debug(f"Error closing final video: {e}")
 
         if progress_callback:
             progress_callback(100, "Video synthesis complete!")
