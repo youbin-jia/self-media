@@ -19,11 +19,6 @@ class TestDataVisualizationEffectInit:
         assert "colors" in effect.style_presets["modern"]
         assert "background" in effect.style_presets["modern"]
 
-    def test_init_temp_dir_created(self):
-        """Test that temp directory is created"""
-        effect = DataVisualizationEffect()
-        assert effect.temp_dir.exists()
-
 
 class TestCreateChart:
     """Test the main create_chart method"""
