@@ -4,7 +4,7 @@ BatchJob model for batch video processing with UUID primary key
 and Redis state management for real-time tracking.
 """
 import uuid
-from sqlalchemy import Column, String, DateTime, JSON, Integer, Text
+from sqlalchemy import Column, String, DateTime, JSON, Integer, Text, ForeignKey
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -23,6 +23,9 @@ class BatchJob(Base):
 
     # UUID primary key
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # User association for data isolation
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     # Batch identification
     name = Column(String(255), nullable=True)  # Optional user-friendly name

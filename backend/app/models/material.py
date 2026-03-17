@@ -13,6 +13,7 @@ class Material(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     # Material information
     material_type = Column(String(20))  # "video", "image", "audio"

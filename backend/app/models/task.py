@@ -10,6 +10,7 @@ class Task(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     task_type = Column(String(50))
     status = Column(String(50))
     progress = Column(Integer)
