@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import IntegrityError
 from app.database import Base
 from app.models.user import User, UserRole
 from app.models.project import Project
@@ -73,7 +74,7 @@ class TestUserModel:
         self.db.commit()
 
         self.db.add(user2)
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             self.db.commit()
 
     def test_user_unique_email(self):
@@ -93,7 +94,7 @@ class TestUserModel:
         self.db.commit()
 
         self.db.add(user2)
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             self.db.commit()
 
     def test_user_roles(self):
@@ -264,3 +265,48 @@ class TestUserModel:
         self.db.refresh(user)
         assert hasattr(user, 'projects')
         assert len(user.projects) == 0
+
+    def test_user_null_username_violation(self):
+        """Test that username cannot be null"""
+        user = User(
+            username=None,
+            email="null_username@example.com",
+            hashed_password="password"
+        )
+        self.db.add(user)
+        with pytest.raises(IntegrityError):
+            self.db.commit()
+
+    def test_user_null_email_violation(self):
+        """Test that email cannot be null"""
+        user = User(
+            username="null_email_user",
+            email=None,
+            hashed_password="password"
+        )
+        self.db.add(user)
+        with pytest.raises(IntegrityError):
+            self.db.commit()
+
+    def test_user_null_password_violation(self):
+        """Test that hashed_password cannot be null"""
+        user = User(
+            username="null_password_user",
+            email="null_password@example.com",
+            hashed_password=None
+        )
+        self.db.add(user)
+        with pytest.raises(IntegrityError):
+            self.db.commit()
+
+    def test_user_invalid_role_validation(self):
+        """Test that invalid role values are rejected by check constraint"""
+        user = User(
+            username="invalid_role_user",
+            email="invalid_role@example.com",
+            hashed_password="password",
+            role="invalid_role"
+        )
+        self.db.add(user)
+        with pytest.raises(IntegrityError):
+            self.db.commit()
