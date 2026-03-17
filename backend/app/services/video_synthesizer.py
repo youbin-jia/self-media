@@ -257,7 +257,7 @@ class VideoSynthesizer:
         enable_ken_burns: bool = False,
         audio_path: Optional[str] = None,
         subtitles: Optional[List[Dict[str, Any]]] = None,
-        enable_effects: bool = False,
+        enable_effects: bool = True,
         effects: Optional[List[VideoClip]] = None,
         script: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
