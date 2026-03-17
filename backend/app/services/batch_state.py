@@ -9,10 +9,14 @@ Provides real-time tracking of batch jobs with Redis for:
 - Distributed state synchronization
 """
 import json
+import logging
 import redis
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from app.config import settings
+from app.models.batch import BatchStatus, BatchPriority
+
+logger = logging.getLogger(__name__)
 
 
 class BatchStateManager:
@@ -66,7 +70,17 @@ class BatchStateManager:
 
         Returns:
             Dictionary with batch data
+
+        Raises:
+            ValueError: If priority or status is invalid
+            redis.RedisError: If Redis operation fails
         """
+        # Validate priority
+        if not BatchPriority.is_valid(priority):
+            raise ValueError(f"Invalid priority: {priority}")
+
+        logger.info(f"Creating batch {batch_id} with {len(project_ids)} projects")
+
         now = datetime.utcnow().isoformat()
 
         batch_data = {
@@ -85,12 +99,16 @@ class BatchStateManager:
             "completed_at": "",
         }
 
-        # Store batch data using hash
-        key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
-        self.redis.hset(key, mapping=batch_data)
-        self.redis.expire(key, self.DEFAULT_TTL)
-
-        return batch_data
+        try:
+            # Store batch data using hash
+            key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
+            self.redis.hset(key, mapping=batch_data)
+            self.redis.expire(key, self.DEFAULT_TTL)
+            logger.debug(f"Batch {batch_id} created successfully")
+            return batch_data
+        except redis.RedisError as e:
+            logger.error(f"Failed to create batch {batch_id}: {e}")
+            raise
 
     def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -135,20 +153,34 @@ class BatchStateManager:
 
         Returns:
             True if successful, False otherwise
+
+        Raises:
+            ValueError: If status is invalid
+            redis.RedisError: If Redis operation fails
         """
+        # Validate status
+        if not BatchStatus.is_valid(status):
+            raise ValueError(f"Invalid status: {status}")
+
         key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
 
-        if not self.redis.exists(key):
-            return False
+        try:
+            if not self.redis.exists(key):
+                logger.warning(f"Batch {batch_id} not found for status update")
+                return False
 
-        updates = {"status": status}
-        if started_at:
-            updates["started_at"] = started_at
-        if completed_at:
-            updates["completed_at"] = completed_at
+            updates = {"status": status}
+            if started_at:
+                updates["started_at"] = started_at
+            if completed_at:
+                updates["completed_at"] = completed_at
 
-        self.redis.hset(key, mapping=updates)
-        return True
+            self.redis.hset(key, mapping=updates)
+            logger.info(f"Batch {batch_id} status updated to {status}")
+            return True
+        except redis.RedisError as e:
+            logger.error(f"Failed to update batch {batch_id} status: {e}")
+            raise
 
     def increment_completed(self, batch_id: str) -> int:
         """
@@ -159,9 +191,18 @@ class BatchStateManager:
 
         Returns:
             New completed count
+
+        Raises:
+            redis.RedisError: If Redis operation fails
         """
-        key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
-        return self.redis.hincrby(key, "completed_projects", 1)
+        try:
+            key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
+            result = self.redis.hincrby(key, "completed_projects", 1)
+            logger.debug(f"Batch {batch_id} completed count incremented to {result}")
+            return result
+        except redis.RedisError as e:
+            logger.error(f"Failed to increment completed count for batch {batch_id}: {e}")
+            raise
 
     def increment_failed(self, batch_id: str) -> int:
         """
@@ -172,9 +213,18 @@ class BatchStateManager:
 
         Returns:
             New failed count
+
+        Raises:
+            redis.RedisError: If Redis operation fails
         """
-        key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
-        return self.redis.hincrby(key, "failed_projects", 1)
+        try:
+            key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
+            result = self.redis.hincrby(key, "failed_projects", 1)
+            logger.debug(f"Batch {batch_id} failed count incremented to {result}")
+            return result
+        except redis.RedisError as e:
+            logger.error(f"Failed to increment failed count for batch {batch_id}: {e}")
+            raise
 
     def add_task_id(self, batch_id: str, task_id: str) -> bool:
         """
@@ -186,20 +236,28 @@ class BatchStateManager:
 
         Returns:
             True if successful
+
+        Raises:
+            redis.RedisError: If Redis operation fails
         """
-        # Add to task list
-        list_key = f"{self.BATCH_TASKS_KEY_PREFIX}{batch_id}"
-        self.redis.rpush(list_key, task_id)
-        self.redis.expire(list_key, self.DEFAULT_TTL)
+        try:
+            # Add to task list
+            list_key = f"{self.BATCH_TASKS_KEY_PREFIX}{batch_id}"
+            self.redis.rpush(list_key, task_id)
+            self.redis.expire(list_key, self.DEFAULT_TTL)
 
-        # Also update in batch hash
-        key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
-        current_tasks = self.redis.hget(key, "task_ids")
-        tasks = json.loads(current_tasks) if current_tasks else []
-        tasks.append(task_id)
-        self.redis.hset(key, "task_ids", json.dumps(tasks))
+            # Also update in batch hash
+            key = f"{self.BATCH_KEY_PREFIX}{batch_id}"
+            current_tasks = self.redis.hget(key, "task_ids")
+            tasks = json.loads(current_tasks) if current_tasks else []
+            tasks.append(task_id)
+            self.redis.hset(key, "task_ids", json.dumps(tasks))
 
-        return True
+            logger.debug(f"Task {task_id} added to batch {batch_id}")
+            return True
+        except redis.RedisError as e:
+            logger.error(f"Failed to add task {task_id} to batch {batch_id}: {e}")
+            raise
 
     def get_task_ids(self, batch_id: str) -> List[str]:
         """
@@ -230,6 +288,9 @@ class BatchStateManager:
 
         Returns:
             True if successful
+
+        Raises:
+            redis.RedisError: If Redis operation fails
         """
         error_entry = {
             "project_id": project_id,
@@ -237,12 +298,17 @@ class BatchStateManager:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-        # Add to error list
-        errors_key = f"{self.BATCH_ERRORS_KEY_PREFIX}{batch_id}"
-        self.redis.rpush(errors_key, json.dumps(error_entry))
-        self.redis.expire(errors_key, self.DEFAULT_TTL)
+        try:
+            # Add to error list
+            errors_key = f"{self.BATCH_ERRORS_KEY_PREFIX}{batch_id}"
+            self.redis.rpush(errors_key, json.dumps(error_entry))
+            self.redis.expire(errors_key, self.DEFAULT_TTL)
 
-        return True
+            logger.warning(f"Error recorded for project {project_id} in batch {batch_id}: {error_message}")
+            return True
+        except redis.RedisError as e:
+            logger.error(f"Failed to add error for batch {batch_id}: {e}")
+            raise
 
     def get_errors(self, batch_id: str) -> List[Dict[str, Any]]:
         """

@@ -221,6 +221,32 @@ class TestBatchStateManager:
         mock_redis.hset.assert_called_once()
         mock_redis.expire.assert_called_once()
 
+    def test_create_batch_invalid_priority(self, state_manager, mock_redis):
+        """Test creating a batch with invalid priority."""
+        batch_id = str(uuid.uuid4())
+        project_ids = ["proj-1", "proj-2"]
+
+        with pytest.raises(ValueError, match="Invalid priority"):
+            state_manager.create_batch(
+                batch_id=batch_id,
+                project_ids=project_ids,
+                priority="invalid",
+            )
+
+    def test_create_batch_redis_error(self, state_manager, mock_redis):
+        """Test creating a batch with Redis error."""
+        import redis as redis_module
+        mock_redis.hset.side_effect = redis_module.RedisError("Connection failed")
+
+        batch_id = str(uuid.uuid4())
+        project_ids = ["proj-1"]
+
+        with pytest.raises(redis_module.RedisError, match="Connection failed"):
+            state_manager.create_batch(
+                batch_id=batch_id,
+                project_ids=project_ids,
+            )
+
     def test_get_batch(self, state_manager, mock_redis):
         """Test getting batch data from Redis."""
         batch_id = "test-batch-id"
@@ -266,6 +292,22 @@ class TestBatchStateManager:
         mock_redis.exists.return_value = False
         result = state_manager.update_status("nonexistent", "running")
         assert result is False
+
+    def test_update_status_invalid_status(self, state_manager, mock_redis):
+        """Test updating status with invalid value."""
+        mock_redis.exists.return_value = True
+
+        with pytest.raises(ValueError, match="Invalid status"):
+            state_manager.update_status("test-batch", "invalid")
+
+    def test_update_status_redis_error(self, state_manager, mock_redis):
+        """Test updating status with Redis error."""
+        import redis as redis_module
+        mock_redis.exists.return_value = True
+        mock_redis.hset.side_effect = redis_module.RedisError("Connection failed")
+
+        with pytest.raises(redis_module.RedisError, match="Connection failed"):
+            state_manager.update_status("test-batch", "running")
 
     def test_increment_completed(self, state_manager, mock_redis):
         """Test incrementing completed count."""
