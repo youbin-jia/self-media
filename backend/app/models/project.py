@@ -19,7 +19,7 @@ class Project(Base):
     topic_title = Column(Text)
     topic_hot_score = Column(Integer)
     project_metadata = Column(JSON)
-    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     team_members = Column(JSON, default=list)  # List of team member user IDs
 
     # Relationships
