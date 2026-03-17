@@ -1,11 +1,12 @@
 # backend/tests/test_advanced_effects.py
-"""Tests for advanced video effects including DataVisualizationEffect"""
+"""Tests for advanced video effects including DataVisualizationEffect and DynamicSubtitleEffect"""
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 from moviepy.editor import VideoClip
 
 from app.services.effects.data_visualization import DataVisualizationEffect
+from app.services.effects.dynamic_subtitle import DynamicSubtitleEffect
 
 
 class TestDataVisualizationEffectInit:
@@ -517,3 +518,560 @@ class TestErrorHandling:
         # Matplotlib will raise ValueError for mismatched arrays
         with pytest.raises(ValueError):
             await effect.create_chart(data, "bar", "modern", 3.0)
+
+
+# ============================================================================
+# DynamicSubtitleEffect Tests
+# ============================================================================
+
+class TestDynamicSubtitleEffectInit:
+    """Test initialization of DynamicSubtitleEffect"""
+
+    def test_init_default_style_presets(self):
+        """Test that default style presets are initialized"""
+        effect = DynamicSubtitleEffect()
+        assert "modern" in effect.style_presets
+        assert "cinematic" in effect.style_presets
+        assert "minimal" in effect.style_presets
+        assert "font_family" in effect.style_presets["modern"]
+        assert "highlight_color" in effect.style_presets["modern"]
+
+    def test_default_frame_size(self):
+        """Test default frame size is set"""
+        effect = DynamicSubtitleEffect()
+        assert effect._default_frame_size == (1920, 1080)
+
+
+class TestHighlightSubtitle:
+    """Test highlight subtitle functionality"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_create_highlight_subtitle_basic(self, effect):
+        """Test creating basic highlight subtitle"""
+        text = "This is an important message"
+        highlight_words = ["important"]
+
+        clip = await effect.create_highlight_subtitle(
+            text=text,
+            highlight_words=highlight_words,
+            style="modern",
+            duration=3.0
+        )
+
+        assert clip is not None
+        assert clip.duration == 3.0
+        assert clip.fps == 24
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_highlight_subtitle_multiple_words(self, effect):
+        """Test highlight subtitle with multiple highlighted words"""
+        text = "The quick brown fox jumps"
+        highlight_words = ["quick", "fox"]
+
+        clip = await effect.create_highlight_subtitle(
+            text=text,
+            highlight_words=highlight_words,
+            style="cinematic",
+            duration=4.0
+        )
+
+        assert clip is not None
+        assert clip.duration == 4.0
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_highlight_subtitle_no_highlights(self, effect):
+        """Test highlight subtitle with no words to highlight"""
+        text = "Plain subtitle text"
+        highlight_words = []
+
+        clip = await effect.create_highlight_subtitle(
+            text=text,
+            highlight_words=highlight_words,
+            style="modern",
+            duration=2.0
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_highlight_subtitle_frame_generation(self, effect):
+        """Test that highlight subtitle generates valid frames"""
+        text = "Test message"
+        highlight_words = ["Test"]
+
+        clip = await effect.create_highlight_subtitle(
+            text=text,
+            highlight_words=highlight_words,
+            style="modern",
+            duration=2.0
+        )
+
+        frame = clip.get_frame(1.0)
+        assert frame is not None
+        assert isinstance(frame, np.ndarray)
+        assert len(frame.shape) == 3  # Should be RGBA
+        assert frame.shape[2] == 4  # RGBA
+
+        clip.close()
+
+
+class TestTypingEffect:
+    """Test typing effect functionality"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_create_typing_effect_basic(self, effect):
+        """Test basic typing effect"""
+        text = "Hello World"
+
+        clip = await effect.create_typing_effect(
+            text=text,
+            style="modern",
+            duration=3.0,
+            cursor=True
+        )
+
+        assert clip is not None
+        assert clip.duration == 3.0
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_typing_effect_no_cursor(self, effect):
+        """Test typing effect without cursor"""
+        text = "Typing without cursor"
+
+        clip = await effect.create_typing_effect(
+            text=text,
+            style="minimal",
+            duration=2.0,
+            cursor=False
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_typing_effect_progress(self, effect):
+        """Test that typing effect shows progressive text"""
+        text = "ABCDE"
+
+        clip = await effect.create_typing_effect(
+            text=text,
+            style="modern",
+            duration=5.0,
+            cursor=False
+        )
+
+        # At t=0, should show nothing or very little
+        frame_early = clip.get_frame(0.5)
+        # At t=4.5, should show most/all text
+        frame_late = clip.get_frame(4.5)
+
+        # Both frames should be valid
+        assert frame_early is not None
+        assert frame_late is not None
+        assert isinstance(frame_early, np.ndarray)
+        assert isinstance(frame_late, np.ndarray)
+
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_typing_effect_empty_text(self, effect):
+        """Test typing effect with empty text raises error"""
+        with pytest.raises(ValueError, match="Text cannot be empty"):
+            await effect.create_typing_effect(
+                text="",
+                style="modern",
+                duration=2.0
+            )
+
+
+class TestEmphasisAnimation:
+    """Test emphasis animation functionality"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_create_emphasis_light(self, effect):
+        """Test light emphasis animation"""
+        text = "Important"
+
+        clip = await effect.create_emphasis_animation(
+            text=text,
+            style="modern",
+            duration=0.5,
+            emphasis_level="light"
+        )
+
+        assert clip is not None
+        assert clip.duration == 0.5
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_emphasis_medium(self, effect):
+        """Test medium emphasis animation"""
+        text = "Very Important"
+
+        clip = await effect.create_emphasis_animation(
+            text=text,
+            style="cinematic",
+            duration=0.8,
+            emphasis_level="medium"
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_emphasis_strong(self, effect):
+        """Test strong emphasis animation"""
+        text = "CRITICAL"
+
+        clip = await effect.create_emphasis_animation(
+            text=text,
+            style="modern",
+            duration=1.0,
+            emphasis_level="strong"
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_emphasis_frame_generation(self, effect):
+        """Test that emphasis generates frames with animation"""
+        text = "Scaling Text"
+
+        clip = await effect.create_emphasis_animation(
+            text=text,
+            style="modern",
+            duration=1.0,
+            emphasis_level="medium"
+        )
+
+        # Get frames at different times
+        frame_start = clip.get_frame(0.1)
+        frame_end = clip.get_frame(0.9)
+
+        assert frame_start is not None
+        assert frame_end is not None
+        assert isinstance(frame_start, np.ndarray)
+        assert isinstance(frame_end, np.ndarray)
+
+        clip.close()
+
+
+class TestFadeSubtitle:
+    """Test fade subtitle functionality"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_create_fade_subtitle_basic(self, effect):
+        """Test basic fade subtitle"""
+        text = "Fading in and out"
+
+        clip = await effect.create_fade_subtitle(
+            text=text,
+            style="modern",
+            duration=3.0,
+            fade_duration=0.5
+        )
+
+        assert clip is not None
+        assert clip.duration == 3.0
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_create_fade_subtitle_alpha_variation(self, effect):
+        """Test that fade subtitle has varying alpha"""
+        text = "Fade test"
+
+        clip = await effect.create_fade_subtitle(
+            text=text,
+            style="modern",
+            duration=2.0,
+            fade_duration=0.5
+        )
+
+        # Get frames at different times
+        frame_fade_in = clip.get_frame(0.25)  # During fade in
+        frame_full = clip.get_frame(1.0)       # Full opacity
+        frame_fade_out = clip.get_frame(1.75)  # During fade out
+
+        assert frame_fade_in is not None
+        assert frame_full is not None
+        assert frame_fade_out is not None
+
+        # All should have alpha channel
+        assert frame_fade_in.shape[2] == 4
+        assert frame_full.shape[2] == 4
+        assert frame_fade_out.shape[2] == 4
+
+        clip.close()
+
+
+class TestAnimatedSubtitle:
+    """Test unified create_animated_subtitle method"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_animated_subtitle_highlight_mode(self, effect):
+        """Test animated subtitle with highlight mode"""
+        clip = await effect.create_animated_subtitle(
+            text="Highlight this word",
+            mode="highlight",
+            style="modern",
+            duration=3.0,
+            highlight_words=["Highlight"]
+        )
+
+        assert clip is not None
+        assert clip.duration == 3.0
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_animated_subtitle_typing_mode(self, effect):
+        """Test animated subtitle with typing mode"""
+        clip = await effect.create_animated_subtitle(
+            text="Typing effect",
+            mode="typing",
+            style="modern",
+            duration=2.0,
+            cursor=True
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_animated_subtitle_emphasis_mode(self, effect):
+        """Test animated subtitle with emphasis mode"""
+        clip = await effect.create_animated_subtitle(
+            text="Emphasis!",
+            mode="emphasis",
+            style="cinematic",
+            duration=0.8,
+            emphasis_level="strong"
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_animated_subtitle_fade_mode(self, effect):
+        """Test animated subtitle with fade mode"""
+        clip = await effect.create_animated_subtitle(
+            text="Fade effect",
+            mode="fade",
+            style="modern",
+            duration=2.0,
+            fade_duration=0.3
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_animated_subtitle_invalid_mode(self, effect):
+        """Test animated subtitle with invalid mode"""
+        with pytest.raises(ValueError, match="Unsupported subtitle mode"):
+            await effect.create_animated_subtitle(
+                text="Test",
+                mode="invalid_mode",
+                style="modern",
+                duration=2.0
+            )
+
+
+class TestStylePresetsSubtitle:
+    """Test style preset functionality for subtitles"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_modern_style(self, effect):
+        """Test modern style"""
+        clip = await effect.create_highlight_subtitle(
+            text="Modern style",
+            highlight_words=["Modern"],
+            style="modern",
+            duration=2.0
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_cinematic_style(self, effect):
+        """Test cinematic style"""
+        clip = await effect.create_highlight_subtitle(
+            text="Cinematic style",
+            highlight_words=["Cinematic"],
+            style="cinematic",
+            duration=2.0
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_minimal_style(self, effect):
+        """Test minimal style"""
+        clip = await effect.create_highlight_subtitle(
+            text="Minimal style",
+            highlight_words=["Minimal"],
+            style="minimal",
+            duration=2.0
+        )
+
+        assert clip is not None
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_unknown_style_fallback(self, effect):
+        """Test unknown style falls back to modern"""
+        clip = await effect.create_highlight_subtitle(
+            text="Unknown style",
+            highlight_words=["Unknown"],
+            style="nonexistent",
+            duration=2.0
+        )
+
+        # Should not raise error, falls back to modern
+        assert clip is not None
+        clip.close()
+
+
+class TestVideoClipPropertiesSubtitle:
+    """Test VideoClip object properties for subtitles"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_clip_has_fps(self, effect):
+        """Test that returned clip has fps set"""
+        clip = await effect.create_highlight_subtitle(
+            text="FPS test",
+            highlight_words=["test"],
+            style="modern",
+            duration=2.0
+        )
+
+        assert clip.fps == 24
+        clip.close()
+
+    @pytest.mark.asyncio
+    async def test_clip_duration_matches(self, effect):
+        """Test that clip duration matches requested duration"""
+        for duration in [1.0, 3.0, 5.0]:
+            clip = await effect.create_typing_effect(
+                text="Duration test",
+                style="modern",
+                duration=duration
+            )
+            assert clip.duration == duration
+            clip.close()
+
+    @pytest.mark.asyncio
+    async def test_clip_frame_rgba(self, effect):
+        """Test that clip frames are RGBA"""
+        clip = await effect.create_highlight_subtitle(
+            text="RGBA test",
+            highlight_words=["test"],
+            style="modern",
+            duration=2.0
+        )
+
+        frame = clip.get_frame(1.0)
+        assert frame.shape[2] == 4  # RGBA
+
+        clip.close()
+
+
+class TestColorParsing:
+    """Test color parsing functionality"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    def test_parse_hex_color(self, effect):
+        """Test parsing hex colors"""
+        result = effect._parse_color("#FFD700")
+        assert result == (255, 215, 0, 255)
+
+    def test_parse_hex_color_with_alpha(self, effect):
+        """Test parsing hex colors with alpha"""
+        result = effect._parse_color("#FFD70080")
+        assert result == (255, 215, 0, 128)
+
+    def test_parse_rgba(self, effect):
+        """Test parsing rgba format"""
+        result = effect._parse_color("rgba(255,100,50,0.5)")
+        assert result == (255, 100, 50, 127)
+
+    def test_parse_named_color_white(self, effect):
+        """Test parsing named color white"""
+        result = effect._parse_color("white")
+        assert result == (255, 255, 255, 255)
+
+    def test_parse_named_color_black(self, effect):
+        """Test parsing named color black"""
+        result = effect._parse_color("black")
+        assert result == (0, 0, 0, 255)
+
+    def test_parse_transparent(self, effect):
+        """Test parsing transparent"""
+        result = effect._parse_color("transparent")
+        assert result == (0, 0, 0, 0)
+
+
+class TestSubtitleErrorHandling:
+    """Test error handling for subtitle effects"""
+
+    @pytest.fixture
+    def effect(self):
+        return DynamicSubtitleEffect()
+
+    @pytest.mark.asyncio
+    async def test_empty_text_typing(self, effect):
+        """Test empty text raises error for typing effect"""
+        with pytest.raises(ValueError):
+            await effect.create_typing_effect(
+                text="",
+                style="modern",
+                duration=2.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_invalid_mode(self, effect):
+        """Test invalid mode raises error"""
+        with pytest.raises(ValueError, match="Unsupported subtitle mode"):
+            await effect.create_animated_subtitle(
+                text="Test",
+                mode="invalid",
+                style="modern",
+                duration=2.0
+            )
