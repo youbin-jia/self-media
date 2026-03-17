@@ -296,3 +296,124 @@ class TestAIGenerationManager:
         assert result["success"] is False
         assert "DALL-E does not support music generation" in result["error"]
         assert result["provider"] == "dalle"
+
+
+class TestAIGenerationAPI:
+    """Test AI Generation API endpoints"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Reset singleton state before each test"""
+        AIGenerationManager._instance = None
+        AIGenerationManager._lock = threading.Lock()
+        import app.services.ai_generation as ai_gen_module
+        ai_gen_module._manager_instance = None
+
+    def test_list_providers(self):
+        """Test listing providers endpoint"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.get("/api/ai-generation/providers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "providers" in data
+
+    @pytest.mark.asyncio
+    async def test_generate_image_endpoint(self):
+        """Test image generation endpoint"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with patch('app.services.ai_generation.dalle_provider.AsyncOpenAI') as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value = mock_instance
+
+            mock_response = Mock()
+            mock_response.data = [Mock(url="https://example.com/image.png")]
+            mock_instance.images.generate = AsyncMock(return_value=mock_response)
+
+            with patch('httpx.AsyncClient') as mock_async_client:
+                mock_response_get = AsyncMock()
+                mock_response_get.content = b"fake_image_data"
+                mock_response_get.raise_for_status = Mock()
+
+                mock_async_client.return_value.__aenter__.return_value.get = AsyncMock(
+                    return_value=mock_response_get
+                )
+
+                client = TestClient(app)
+                response = client.post(
+                    "/api/ai-generation/generate-image",
+                    json={
+                        "prompt": "A beautiful sunset",
+                        "provider": "dalle",
+                        "style": "realistic",
+                        "size": [1920, 1080]
+                    }
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert "image_path" in data
+
+    def test_generate_image_invalid_provider(self):
+        """Test image generation with invalid provider"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "Test",
+                "provider": "invalid_provider",
+                "style": "realistic",
+                "size": [1024, 1024]
+            }
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_generate_music_endpoint_unsupported(self):
+        """Test music generation endpoint with unsupported provider"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with patch('app.services.ai_generation.dalle_provider.AsyncOpenAI') as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value = mock_instance
+
+            client = TestClient(app)
+            response = client.post(
+                "/api/ai-generation/generate-music",
+                json={
+                    "script_context": {"title": "Test video"},
+                    "duration": 30.0,
+                    "provider": "dalle",
+                    "mood": "auto"
+                }
+            )
+
+            # DALL-E doesn't support music generation
+            assert response.status_code == 500
+
+    def test_generate_image_missing_prompt(self):
+        """Test image generation with missing prompt"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "provider": "dalle",
+                "style": "realistic"
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
