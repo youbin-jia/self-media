@@ -4,6 +4,7 @@ from app.models.script import Script
 from app.models.material import Material
 from app.models.task import Task
 from app.models.quality_report import QualityReport
+from app.models.batch import BatchJob, BatchStatus, BatchPriority
 
 __all__ = [
     "Project",
@@ -11,4 +12,7 @@ __all__ = [
     "Material",
     "Task",
     "QualityReport",
+    "BatchJob",
+    "BatchStatus",
+    "BatchPriority",
 ]
