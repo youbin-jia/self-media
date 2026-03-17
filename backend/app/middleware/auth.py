@@ -1,7 +1,24 @@
 # backend/app/middleware/auth.py
-"""Authentication middleware for JWT token validation and role-based permission checking"""
+"""
+Authentication middleware for JWT token validation and role-based permission checking.
+
+Architecture Decision: Simple Role-Based Access Control
+=======================================================
+This module implements a simple role-based access control (RBAC) approach rather than
+a full-featured RBAC system with granular permissions, resource-level policies, or
+role hierarchies. This design choice was made because:
+
+1. The application has only three roles (admin, editor, viewer) with well-defined
+   permission boundaries.
+2. A full RBAC system would add unnecessary complexity for the current requirements.
+3. The simple approach provides clear, auditable access control without the overhead
+   of permission tables, role inheritance, or policy evaluation engines.
+
+If the application grows to require more granular permissions (e.g., per-resource
+permissions, time-based access, or complex role hierarchies), this should be
+migrated to a proper RBAC framework with database-backed permission models.
+"""
 from typing import List, Optional
-from functools import wraps
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -87,46 +104,43 @@ def get_current_user(
     return user
 
 
-def require_role(roles: List[str]):
+def require_roles(roles: List[str]):
     """
-    Decorator to check user roles.
+    Dependency factory for role-based access control.
 
-    Creates a decorator that validates the current user has one of the
-    allowed roles.
+    Creates a FastAPI dependency that validates the current user has one of the
+    allowed roles. This pattern integrates seamlessly with FastAPI's dependency
+    injection system.
+
+    Architecture Note: This simple role-checking approach is sufficient for the
+    current three-role system (admin, editor, viewer). For more complex scenarios,
+    consider migrating to a full RBAC system.
 
     Args:
         roles: List of allowed role names (e.g., ["admin", "editor"])
 
     Returns:
-        Decorator function that wraps the route handler
+        Depends: A FastAPI dependency that returns the authenticated User if
+                 they have the required role, or raises HTTPException.
+
+    Usage:
+        @router.post("/admin-only")
+        async def admin_route(user: User = require_roles(["admin"])):
+            return {"message": "Admin access granted"}
 
     Raises:
         HTTPException: 403 if user role is not in the allowed roles
     """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, current_user: User = None, **kwargs):
-            # Get current_user from kwargs or args
-            if current_user is None:
-                # Try to find current_user in kwargs
-                current_user = kwargs.get('current_user')
-
-            if current_user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated"
-                )
-
-            # Check if user role is in allowed roles
-            if current_user.role not in roles:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied"
-                )
-
-            return func(*args, current_user=current_user, **kwargs)
-        return wrapper
-    return decorator
+    async def role_checker(
+        current_user: User = Depends(get_current_user)
+    ) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied"
+            )
+        return current_user
+    return Depends(role_checker)
 
 
 def check_project_access(project_id: str, user: User, db: Session) -> bool:
