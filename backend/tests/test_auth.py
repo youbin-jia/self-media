@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.user import User, UserRole
+from app.models.project import Project
 
 
 class TestUserModel:
@@ -192,3 +193,74 @@ class TestUserModel:
         assert user.email in repr_str
         # role is stored as string in DB, so user.role is "editor" not UserRole.EDITOR
         assert user.role in repr_str
+
+    def test_user_project_relationship(self):
+        """Test that User-Project relationship works correctly"""
+        # Create a user
+        user = User(
+            username="project_owner",
+            email="owner@example.com",
+            hashed_password="password",
+            role=UserRole.EDITOR
+        )
+        self.db.add(user)
+        self.db.commit()
+
+        # Create projects owned by the user
+        project1 = Project(
+            title="Project 1",
+            status="pending",
+            owner_id=user.id
+        )
+        project2 = Project(
+            title="Project 2",
+            status="active",
+            owner_id=user.id
+        )
+        self.db.add_all([project1, project2])
+        self.db.commit()
+
+        # Refresh to load relationships
+        self.db.refresh(user)
+        self.db.refresh(project1)
+        self.db.refresh(project2)
+
+        # Verify user has projects relationship
+        assert hasattr(user, 'projects')
+        assert len(user.projects) == 2
+        assert project1 in user.projects
+        assert project2 in user.projects
+
+        # Verify projects have owner relationship
+        assert hasattr(project1, 'owner')
+        assert project1.owner == user
+        assert project1.owner_id == user.id
+        assert project2.owner == user
+        assert project2.owner_id == user.id
+
+    def test_project_can_have_null_owner(self):
+        """Test that project owner_id can be null"""
+        project = Project(
+            title="Orphan Project",
+            status="pending"
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        assert project.id is not None
+        assert project.owner_id is None
+        assert project.owner is None
+
+    def test_user_can_have_no_projects(self):
+        """Test that a user can exist without projects"""
+        user = User(
+            username="user_no_projects",
+            email="no_projects@example.com",
+            hashed_password="password"
+        )
+        self.db.add(user)
+        self.db.commit()
+
+        self.db.refresh(user)
+        assert hasattr(user, 'projects')
+        assert len(user.projects) == 0

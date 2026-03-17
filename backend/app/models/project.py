@@ -1,6 +1,6 @@
 # backend/app/models/project.py
 import uuid
-from sqlalchemy import Column, String, DateTime, Text, JSON, Integer
+from sqlalchemy import Column, String, DateTime, Text, JSON, Integer, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -19,8 +19,10 @@ class Project(Base):
     topic_title = Column(Text)
     topic_hot_score = Column(Integer)
     project_metadata = Column(JSON)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
-    # Relationships using backref
+    # Relationships
+    owner = relationship("User", back_populates="projects")
     scripts = relationship("Script", backref="project")
     materials = relationship("Material", backref="project")
     tasks = relationship("Task", backref="project")
