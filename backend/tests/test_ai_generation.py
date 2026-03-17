@@ -417,3 +417,111 @@ class TestAIGenerationAPI:
         )
 
         assert response.status_code == 422  # Validation error
+
+    def test_generate_image_empty_prompt(self):
+        """Test image generation with empty prompt returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "",
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [1024, 1024]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+    def test_generate_image_whitespace_only_prompt(self):
+        """Test image generation with whitespace-only prompt returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "   ",
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [1024, 1024]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+    def test_generate_image_invalid_size_not_two_elements(self):
+        """Test image generation with invalid size (not 2 elements) returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "A beautiful sunset",
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [1024]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+    def test_generate_image_invalid_size_negative_values(self):
+        """Test image generation with negative size values returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "A beautiful sunset",
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [-100, 100]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+    def test_generate_image_invalid_size_zero_values(self):
+        """Test image generation with zero size values returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "A beautiful sunset",
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [0, 100]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+    def test_generate_image_prompt_too_long(self):
+        """Test image generation with prompt exceeding max length returns 422"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/ai-generation/generate-image",
+            json={
+                "prompt": "x" * 4001,  # Exceeds 4000 character limit
+                "provider": "dalle",
+                "style": "realistic",
+                "size": [1024, 1024]
+            }
+        )
+
+        assert response.status_code == 422  # Validation error

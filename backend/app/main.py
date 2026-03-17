@@ -36,7 +36,7 @@ app.include_router(materials.router, prefix="/api/materials", tags=["materials"]
 app.include_router(video.router, prefix="/api/video", tags=["video"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(quality.router, prefix="/api/quality", tags=["quality"])
-app.include_router(ai_generation.router)
+app.include_router(ai_generation.router, prefix="/api/ai-generation")
 
 # TODO: Include routers when ready
 # from app.api import tasks

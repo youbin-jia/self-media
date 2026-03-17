@@ -1,10 +1,10 @@
 # backend/app/api/ai_generation.py
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, Dict, Any, List
 from app.services.ai_generation import get_manager
 
-router = APIRouter(prefix="/api/ai-generation", tags=["AI Generation"])
+router = APIRouter(tags=["AI Generation"])
 
 
 class GenerateImageRequest(BaseModel):
@@ -12,6 +12,24 @@ class GenerateImageRequest(BaseModel):
     provider: str = "dalle"
     style: str = "realistic"
     size: List[int] = [1920, 1080]
+
+    @field_validator('prompt')
+    @classmethod
+    def validate_prompt(cls, v):
+        if not v or not v.strip():
+            raise ValueError('prompt cannot be empty')
+        if len(v) > 4000:  # DALL-E limit
+            raise ValueError('prompt exceeds maximum length of 4000 characters')
+        return v
+
+    @field_validator('size')
+    @classmethod
+    def validate_size(cls, v):
+        if len(v) != 2:
+            raise ValueError('size must contain exactly 2 elements [width, height]')
+        if v[0] <= 0 or v[1] <= 0:
+            raise ValueError('size values must be positive')
+        return v
 
 
 class GenerateMusicRequest(BaseModel):
