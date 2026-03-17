@@ -32,7 +32,7 @@ class BatchJob(Base):
     task_ids = Column(JSON, nullable=True, default=list)  # List of Celery task IDs
 
     # Status and priority
-    status = Column(String(20), nullable=False, default="pending")  # pending, running, completed, failed, cancelled
+    status = Column(String(20), nullable=False, default="queued")  # queued, running, completed, failed, cancelled
     priority = Column(String(10), nullable=False, default="normal")  # high, normal, low
 
     # Concurrency control
@@ -71,7 +71,7 @@ class BatchJob(Base):
     @property
     def is_active(self) -> bool:
         """Check if batch is still active (not completed, failed, or cancelled)."""
-        return self.status in ("pending", "running")
+        return self.status in ("queued", "running")
 
     @property
     def is_finished(self) -> bool:
@@ -99,7 +99,7 @@ class BatchJob(Base):
 
 class BatchStatus:
     """Enumeration of valid batch statuses."""
-    PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -107,7 +107,7 @@ class BatchStatus:
 
     @classmethod
     def all(cls) -> list:
-        return [cls.PENDING, cls.RUNNING, cls.COMPLETED, cls.FAILED, cls.CANCELLED]
+        return [cls.QUEUED, cls.RUNNING, cls.COMPLETED, cls.FAILED, cls.CANCELLED]
 
     @classmethod
     def is_valid(cls, status: str) -> bool:

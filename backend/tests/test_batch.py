@@ -32,7 +32,7 @@ class TestBatchJobModel:
 
         # Check default values are configured correctly
         status_col = mapper.columns['status']
-        assert status_col.default.arg == "pending"
+        assert status_col.default.arg == "queued"
 
         priority_col = mapper.columns['priority']
         assert priority_col.default.arg == "normal"
@@ -89,7 +89,7 @@ class TestBatchJobModel:
 
     def test_is_active(self):
         """Test is_active property."""
-        batch = BatchJob(status=BatchStatus.PENDING)
+        batch = BatchJob(status=BatchStatus.QUEUED)
         assert batch.is_active is True
 
         batch.status = BatchStatus.RUNNING
@@ -106,7 +106,7 @@ class TestBatchJobModel:
 
     def test_is_finished(self):
         """Test is_finished property."""
-        batch = BatchJob(status=BatchStatus.PENDING)
+        batch = BatchJob(status=BatchStatus.QUEUED)
         assert batch.is_finished is False
 
         batch.status = BatchStatus.COMPLETED
@@ -146,7 +146,7 @@ class TestBatchStatus:
     def test_all_statuses(self):
         """Test that all statuses are defined."""
         all_statuses = BatchStatus.all()
-        assert "pending" in all_statuses
+        assert "queued" in all_statuses
         assert "running" in all_statuses
         assert "completed" in all_statuses
         assert "failed" in all_statuses
@@ -154,7 +154,7 @@ class TestBatchStatus:
 
     def test_is_valid(self):
         """Test status validation."""
-        assert BatchStatus.is_valid("pending") is True
+        assert BatchStatus.is_valid("queued") is True
         assert BatchStatus.is_valid("running") is True
         assert BatchStatus.is_valid("completed") is True
         assert BatchStatus.is_valid("failed") is True
@@ -215,7 +215,7 @@ class TestBatchStateManager:
         )
 
         assert result["id"] == batch_id
-        assert result["status"] == "pending"
+        assert result["status"] == "queued"
         assert result["priority"] == "high"
         assert result["concurrency"] == "5"
         mock_redis.hset.assert_called_once()
@@ -378,12 +378,12 @@ class TestBatchStateManager:
         mock_redis.hgetall.side_effect = [
             {"id": "batch-1", "status": "running", "created_at": "2024-01-01T12:00:00"},
             {"id": "batch-2", "status": "completed", "created_at": "2024-01-01T11:00:00"},
-            {"id": "batch-3", "status": "pending", "created_at": "2024-01-01T13:00:00"},
+            {"id": "batch-3", "status": "queued", "created_at": "2024-01-01T13:00:00"},
         ]
 
         result = state_manager.list_active_batches()
 
-        # Only running and pending should be included
+        # Only running and queued should be included
         assert len(result) == 2
         ids = [b["id"] for b in result]
         assert "batch-1" in ids

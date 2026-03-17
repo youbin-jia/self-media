@@ -74,7 +74,7 @@ class BatchStateManager:
             "name": name or "",
             "project_ids": json.dumps(project_ids),
             "task_ids": json.dumps([]),
-            "status": "pending",
+            "status": "queued",
             "priority": priority,
             "concurrency": str(concurrency),
             "total_projects": str(len(project_ids)),
@@ -129,7 +129,7 @@ class BatchStateManager:
 
         Args:
             batch_id: Batch identifier
-            status: New status (pending, running, completed, failed, cancelled)
+            status: New status (queued, running, completed, failed, cancelled)
             started_at: Optional started timestamp
             completed_at: Optional completed timestamp
 
@@ -312,7 +312,7 @@ class BatchStateManager:
 
     def list_active_batches(self, limit: int = 20) -> List[Dict[str, Any]]:
         """
-        List all active (pending or running) batches.
+        List all active (queued or running) batches.
 
         Args:
             limit: Maximum number of batches to return
@@ -327,7 +327,7 @@ class BatchStateManager:
         for key in batch_keys:
             batch_id = key.replace(self.BATCH_KEY_PREFIX, "")
             batch = self.get_batch(batch_id)
-            if batch and batch.get("status") in ("pending", "running"):
+            if batch and batch.get("status") in ("queued", "running"):
                 batches.append(batch)
 
         # Sort by created_at descending
