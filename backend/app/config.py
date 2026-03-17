@@ -38,6 +38,20 @@ class Settings(BaseSettings):
     # TTS配置
     DEFAULT_TTS_PROVIDER: str = "azure"
 
+    # DALL-E (uses OPENAI_API_KEY, but can override)
+    DALLE_API_KEY: Optional[str] = None
+
+    # Midjourney (optional, third-party API)
+    MIDJOURNEY_API_KEY: Optional[str] = None
+    MIDJOURNEY_ENDPOINT: Optional[str] = None
+
+    # Suno AI (for music generation)
+    SUNO_API_KEY: Optional[str] = None
+    SUNO_ENDPOINT: Optional[str] = None
+
+    # AI Generation settings
+    DEFAULT_AI_GENERATION_PROVIDER: str = "dalle"
+
     # App Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"
     API_KEY: str = "your-api-key-change-in-production"
