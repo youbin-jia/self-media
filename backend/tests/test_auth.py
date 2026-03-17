@@ -560,3 +560,418 @@ class TestConfigSecurity:
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert "JWT_SECRET_KEY" in str(errors[0])
+
+
+class TestGetCurrentUser:
+    """Test cases for get_current_user middleware dependency"""
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self):
+        """Setup test database"""
+        engine = create_engine("sqlite:///:memory:")
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base.metadata.create_all(bind=engine)
+        self.db = SessionLocal()
+        yield
+        self.db.close()
+
+    @pytest.fixture
+    def sample_user(self):
+        """Create a sample user in database"""
+        user = User(
+            id="123e4567-e89b-12d3-a456-426614174000",
+            username="testuser",
+            email="test@example.com",
+            hashed_password="hashed_password_123",
+            role=UserRole.EDITOR
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    @pytest.fixture
+    def jwt_handler(self):
+        """Create a JWTHandler instance for testing"""
+        return JWTHandler()
+
+    @pytest.fixture
+    def valid_token(self, jwt_handler, sample_user):
+        """Create a valid JWT token for sample user"""
+        return jwt_handler.create_access_token(
+            user_id=sample_user.id,
+            username=sample_user.username,
+            role=sample_user.role
+        )
+
+    def test_get_current_user_with_valid_token(self, sample_user, valid_token):
+        """Test that get_current_user returns user from valid token"""
+        from app.middleware.auth import get_current_user
+        from fastapi import HTTPException
+        from unittest.mock import MagicMock
+
+        # Mock the credentials
+        credentials = MagicMock()
+        credentials.credentials = valid_token
+
+        # Call get_current_user
+        result = get_current_user(credentials=credentials, db=self.db)
+
+        assert result is not None
+        assert result.id == sample_user.id
+        assert result.username == sample_user.username
+        assert result.role == sample_user.role
+
+    def test_get_current_user_with_invalid_token_raises_401(self):
+        """Test that invalid token raises 401"""
+        from app.middleware.auth import get_current_user
+        from fastapi import HTTPException
+        from unittest.mock import MagicMock
+
+        credentials = MagicMock()
+        credentials.credentials = "invalid.token.string"
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(credentials=credentials, db=self.db)
+
+        assert exc_info.value.status_code == 401
+        assert "Could not validate credentials" in exc_info.value.detail
+
+    def test_get_current_user_with_nonexistent_user_raises_401(self, jwt_handler):
+        """Test that token for non-existent user raises 401"""
+        from app.middleware.auth import get_current_user
+        from fastapi import HTTPException
+        from unittest.mock import MagicMock
+
+        # Token for user that doesn't exist in database
+        token = jwt_handler.create_access_token(
+            user_id="nonexistent-user-id",
+            username="ghost",
+            role="editor"
+        )
+
+        credentials = MagicMock()
+        credentials.credentials = token
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(credentials=credentials, db=self.db)
+
+        assert exc_info.value.status_code == 401
+
+    def test_get_current_user_with_inactive_user_raises_401(self, sample_user):
+        """Test that inactive user is rejected"""
+        from app.middleware.auth import get_current_user
+        from fastapi import HTTPException
+        from unittest.mock import MagicMock
+
+        # Deactivate the user
+        sample_user.is_active = False
+        self.db.commit()
+
+        jwt_handler = JWTHandler()
+        token = jwt_handler.create_access_token(
+            user_id=sample_user.id,
+            username=sample_user.username,
+            role=sample_user.role
+        )
+
+        credentials = MagicMock()
+        credentials.credentials = token
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(credentials=credentials, db=self.db)
+
+        assert exc_info.value.status_code == 401
+        assert "inactive" in exc_info.value.detail.lower()
+
+    def test_get_current_user_missing_authorization_header_raises_401(self):
+        """Test that missing Authorization header raises 401"""
+        from app.middleware.auth import get_current_user
+        from fastapi import HTTPException
+        from unittest.mock import MagicMock
+
+        # No credentials provided
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(credentials=None, db=self.db)
+
+        assert exc_info.value.status_code == 401
+
+
+class TestRequireRole:
+    """Test cases for require_role decorator"""
+
+    @pytest.fixture
+    def admin_user(self):
+        """Create an admin user"""
+        return User(
+            id="admin-user-id",
+            username="admin",
+            email="admin@example.com",
+            hashed_password="hashed",
+            role=UserRole.ADMIN
+        )
+
+    @pytest.fixture
+    def editor_user(self):
+        """Create an editor user"""
+        return User(
+            id="editor-user-id",
+            username="editor",
+            email="editor@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+
+    @pytest.fixture
+    def viewer_user(self):
+        """Create a viewer user"""
+        return User(
+            id="viewer-user-id",
+            username="viewer",
+            email="viewer@example.com",
+            hashed_password="hashed",
+            role=UserRole.VIEWER
+        )
+
+    def test_require_role_admin_allowed_for_admin(self, admin_user):
+        """Test that admin role is allowed for admin user"""
+        from app.middleware.auth import require_role
+
+        @require_role(["admin"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=admin_user)
+        assert result["status"] == "success"
+
+    def test_require_role_editor_allowed_for_admin(self, admin_user):
+        """Test that admin can access editor-only routes"""
+        from app.middleware.auth import require_role
+
+        @require_role(["editor"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=admin_user)
+        assert result["status"] == "success"
+
+    def test_require_role_editor_allowed_for_editor(self, editor_user):
+        """Test that editor can access editor-only routes"""
+        from app.middleware.auth import require_role
+
+        @require_role(["editor"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=editor_user)
+        assert result["status"] == "success"
+
+    def test_require_role_viewer_denied_for_editor_route(self, viewer_user):
+        """Test that viewer cannot access editor-only routes"""
+        from app.middleware.auth import require_role
+        from fastapi import HTTPException
+
+        @require_role(["editor"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            protected_route(current_user=viewer_user)
+
+        assert exc_info.value.status_code == 403
+
+    def test_require_role_multiple_roles_allowed(self, editor_user):
+        """Test that user can access routes with multiple allowed roles"""
+        from app.middleware.auth import require_role
+
+        @require_role(["admin", "editor"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=editor_user)
+        assert result["status"] == "success"
+
+    def test_require_role_viewer_allowed_for_viewer_route(self, viewer_user):
+        """Test that viewer can access viewer-only routes"""
+        from app.middleware.auth import require_role
+
+        @require_role(["viewer"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=viewer_user)
+        assert result["status"] == "success"
+
+    def test_require_role_all_roles_allowed(self, viewer_user):
+        """Test that all roles can access routes open to all"""
+        from app.middleware.auth import require_role
+
+        @require_role(["admin", "editor", "viewer"])
+        def protected_route(current_user: User):
+            return {"status": "success"}
+
+        result = protected_route(current_user=viewer_user)
+        assert result["status"] == "success"
+
+
+class TestCheckProjectAccess:
+    """Test cases for check_project_access function"""
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self):
+        """Setup test database"""
+        engine = create_engine("sqlite:///:memory:")
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base.metadata.create_all(bind=engine)
+        self.db = SessionLocal()
+        yield
+        self.db.close()
+
+    @pytest.fixture
+    def admin_user(self):
+        """Create an admin user"""
+        user = User(
+            id="admin-id",
+            username="admin",
+            email="admin@example.com",
+            hashed_password="hashed",
+            role=UserRole.ADMIN
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    @pytest.fixture
+    def editor_user(self):
+        """Create an editor user"""
+        user = User(
+            id="editor-id",
+            username="editor",
+            email="editor@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    @pytest.fixture
+    def viewer_user(self):
+        """Create a viewer user"""
+        user = User(
+            id="viewer-id",
+            username="viewer",
+            email="viewer@example.com",
+            hashed_password="hashed",
+            role=UserRole.VIEWER
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    @pytest.fixture
+    def owned_project(self, editor_user):
+        """Create a project owned by editor_user"""
+        project = Project(
+            id="owned-project-id",
+            title="Owned Project",
+            status="pending",
+            owner_id=editor_user.id
+        )
+        self.db.add(project)
+        self.db.commit()
+        return project
+
+    @pytest.fixture
+    def other_project(self):
+        """Create a project owned by another user"""
+        other_user = User(
+            id="other-user-id",
+            username="other",
+            email="other@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+        self.db.add(other_user)
+        project = Project(
+            id="other-project-id",
+            title="Other Project",
+            status="pending",
+            owner_id=other_user.id
+        )
+        self.db.add(project)
+        self.db.commit()
+        return project
+
+    def test_admin_can_access_any_project(self, admin_user, other_project):
+        """Test that admin can access any project"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(other_project.id, admin_user, self.db)
+        assert result is True
+
+    def test_editor_can_access_own_project(self, editor_user, owned_project):
+        """Test that editor can access their own project"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(owned_project.id, editor_user, self.db)
+        assert result is True
+
+    def test_editor_cannot_access_others_project(self, editor_user, other_project):
+        """Test that editor cannot access other users' projects"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(other_project.id, editor_user, self.db)
+        assert result is False
+
+    def test_viewer_cannot_access_others_project(self, viewer_user, other_project):
+        """Test that viewer cannot access other users' projects"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(other_project.id, viewer_user, self.db)
+        assert result is False
+
+    def test_viewer_cannot_access_any_project_without_team(self, viewer_user, owned_project):
+        """Test that viewer cannot access projects without team membership"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(owned_project.id, viewer_user, self.db)
+        assert result is False
+
+    def test_nonexistent_project_returns_false(self, editor_user):
+        """Test that nonexistent project returns False"""
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access("nonexistent-project-id", editor_user, self.db)
+        assert result is False
+
+    def test_null_owner_project_admin_can_access(self, admin_user):
+        """Test that admin can access project with null owner"""
+        project = Project(
+            id="null-owner-project-id",
+            title="Null Owner Project",
+            status="pending",
+            owner_id=None
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(project.id, admin_user, self.db)
+        assert result is True
+
+    def test_null_owner_project_editor_cannot_access(self, editor_user):
+        """Test that editor cannot access project with null owner"""
+        project = Project(
+            id="null-owner-project-2-id",
+            title="Null Owner Project 2",
+            status="pending",
+            owner_id=None
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(project.id, editor_user, self.db)
+        assert result is False
