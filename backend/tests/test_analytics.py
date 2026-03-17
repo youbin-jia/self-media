@@ -472,3 +472,270 @@ class TestMetricsCollectorEdgeCases:
 
         # Should handle null status gracefully
         assert isinstance(distribution, dict)
+
+
+class TestDashboardService:
+    """Tests for Dashboard service."""
+
+    @pytest.fixture
+    def db_session(self):
+        """Create an in-memory database session for testing."""
+        SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+        engine = create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+        session = TestingSessionLocal()
+        yield session
+        session.close()
+
+    @pytest.fixture
+    def dashboard_service(self, db_session):
+        """Create a Dashboard service instance with test database."""
+        from app.services.analytics.dashboard import DashboardService
+        return DashboardService(db=db_session)
+
+    def test_get_dashboard_summary_empty_database(self, dashboard_service):
+        """Test dashboard summary when no projects exist."""
+        summary = dashboard_service.get_dashboard_summary()
+
+        assert summary["total_projects"] == 0
+        assert summary["status_distribution"] == {}
+        assert summary["success_rate"] == 0.0
+        assert summary["average_processing_time"] is None
+        assert summary["recent_activities"] == []
+        assert summary["active_projects"] == 0
+        assert summary["completed_this_week"] == 0
+
+    def test_get_dashboard_summary_with_projects(self, dashboard_service, db_session):
+        """Test dashboard summary with various project states."""
+        now = datetime.utcnow()
+
+        # Create projects with different statuses
+        projects = [
+            Project(title="Completed 1", status="completed"),
+            Project(title="Completed 2", status="completed"),
+            Project(title="Failed 1", status="failed"),
+            Project(title="Processing 1", status="processing"),
+            Project(title="Pending 1", status="pending"),
+        ]
+
+        for project in projects:
+            project.created_at = now - timedelta(hours=1)
+            project.updated_at = now
+            db_session.add(project)
+        db_session.commit()
+
+        summary = dashboard_service.get_dashboard_summary()
+
+        assert summary["total_projects"] == 5
+        assert summary["active_projects"] == 1  # Only processing
+        assert len(summary["recent_activities"]) <= 10
+        assert isinstance(summary["success_rate"], float)
+
+    def test_get_recent_activities(self, dashboard_service, db_session):
+        """Test getting recent activities."""
+        now = datetime.utcnow()
+
+        # Create recent projects
+        for i in range(15):
+            p = Project(title=f"Project {i}", status="completed")
+            p.created_at = now - timedelta(hours=i)
+            p.updated_at = now - timedelta(hours=i)
+            db_session.add(p)
+        db_session.commit()
+
+        activities = dashboard_service.get_recent_activities(limit=10)
+
+        assert len(activities) == 10
+        # Most recent should be first
+        assert activities[0]["title"] == "Project 0"
+
+    def test_get_active_projects_count(self, dashboard_service, db_session):
+        """Test counting active projects."""
+        # Create projects with different statuses
+        for i in range(3):
+            db_session.add(Project(title=f"Processing {i}", status="processing"))
+        for i in range(5):
+            db_session.add(Project(title=f"Pending {i}", status="pending"))
+        for i in range(2):
+            db_session.add(Project(title=f"Completed {i}", status="completed"))
+        db_session.commit()
+
+        count = dashboard_service.get_active_projects_count()
+
+        # Only processing projects should be counted as active
+        assert count == 3
+
+    def test_get_completed_this_week(self, dashboard_service, db_session):
+        """Test counting projects completed this week."""
+        now = datetime.utcnow()
+
+        # Completed this week (within last 7 days)
+        for i in range(5):
+            p = Project(title=f"This Week {i}", status="completed")
+            p.created_at = now - timedelta(days=2)
+            p.updated_at = now - timedelta(hours=i)  # All within last few hours
+            db_session.add(p)
+
+        # Completed last week (more than 7 days ago)
+        for i in range(3):
+            p = Project(title=f"Last Week {i}", status="completed")
+            p.created_at = now - timedelta(weeks=2)
+            p.updated_at = now - timedelta(weeks=1, days=i)
+            db_session.add(p)
+
+        db_session.commit()
+
+        count = dashboard_service.get_completed_this_week()
+
+        assert count == 5
+
+
+class TestAnalyticsAPI:
+    """Tests for Analytics API endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.database import get_db
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+        engine = create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        TestingSessionLocal = sessionmaker(
+            autocommit=False, autoflush=False, bind=engine
+        )
+        Base.metadata.create_all(bind=engine)
+
+        def override_get_db():
+            try:
+                db = TestingSessionLocal()
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_get_db
+        client = TestClient(app)
+        yield client
+
+    def test_get_statistics_endpoint(self, client):
+        """Test GET /api/analytics/statistics endpoint."""
+        response = client.get("/api/analytics/statistics")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_projects" in data
+        assert "status_distribution" in data
+        assert "success_rate" in data
+        assert "average_processing_time" in data
+
+    def test_get_status_distribution_endpoint(self, client):
+        """Test GET /api/analytics/status-distribution endpoint."""
+        response = client.get("/api/analytics/status-distribution")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "status_distribution" in data
+        assert isinstance(data["status_distribution"], dict)
+
+    def test_get_success_rate_endpoint(self, client):
+        """Test GET /api/analytics/success-rate endpoint."""
+        response = client.get("/api/analytics/success-rate")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "success_rate" in data
+        assert "completed_projects" in data
+        assert "failed_projects" in data
+
+    def test_get_processing_time_endpoint(self, client):
+        """Test GET /api/analytics/processing-time endpoint."""
+        response = client.get("/api/analytics/processing-time")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "average_processing_time" in data
+        assert "unit" in data
+        assert data["unit"] == "seconds"
+
+    def test_get_timeline_endpoint_default(self, client):
+        """Test GET /api/analytics/timeline endpoint with default parameters."""
+        response = client.get("/api/analytics/timeline")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "period" in data
+        assert "timeline" in data
+        assert isinstance(data["timeline"], list)
+
+    def test_get_timeline_endpoint_with_period(self, client):
+        """Test GET /api/analytics/timeline endpoint with period parameter."""
+        response = client.get("/api/analytics/timeline?period=weekly")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["period"] == "weekly"
+
+    def test_get_dashboard_endpoint(self, client):
+        """Test GET /api/analytics/dashboard endpoint."""
+        response = client.get("/api/analytics/dashboard")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_projects" in data
+        assert "status_distribution" in data
+        assert "success_rate" in data
+        assert "recent_activities" in data
+        assert "active_projects" in data
+        assert "completed_this_week" in data
+
+    def test_api_with_projects(self, client):
+        """Test API endpoints with actual project data."""
+        # Create some projects via API
+        from app.database import get_db
+        from app.main import app
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        # Get the database session from the app
+        for dep in app.dependency_overrides.values():
+            db_gen = dep()
+            db = next(db_gen)
+            break
+
+        # Create projects
+        projects = [
+            Project(title="Test 1", status="completed"),
+            Project(title="Test 2", status="completed"),
+            Project(title="Test 3", status="failed"),
+        ]
+        for p in projects:
+            db.add(p)
+        db.commit()
+
+        # Test statistics endpoint
+        response = client.get("/api/analytics/statistics")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_projects"] == 3
+        assert data["success_rate"] == 66.66666666666666
+
+        # Test dashboard endpoint
+        response = client.get("/api/analytics/dashboard")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_projects"] == 3

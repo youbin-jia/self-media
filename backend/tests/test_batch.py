@@ -898,3 +898,236 @@ class TestBatchAPI:
         )
 
         assert response.status_code == 422  # Validation error
+
+
+class TestSmartScheduler:
+    """Tests for SmartScheduler intelligent batch scheduling."""
+
+    @pytest.fixture
+    def mock_state_manager(self):
+        """Create a mock BatchStateManager."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        return MagicMock()
+
+    @pytest.fixture
+    def scheduler(self, mock_state_manager, mock_db):
+        """Create a SmartScheduler with mocked dependencies."""
+        from app.services.batch.scheduler import SmartScheduler
+        scheduler = SmartScheduler(
+            state_manager=mock_state_manager,
+            db_session=mock_db
+        )
+        return scheduler
+
+    def test_get_system_load(self, scheduler):
+        """Test getting system load information."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            # Mock CPU and memory
+            mock_psutil.cpu_percent.return_value = 45.5
+            mock_psutil.virtual_memory.return_value.percent = 62.3
+            mock_psutil.cpu_count.return_value = 8
+
+            load = scheduler.get_system_load()
+
+            assert "cpu_percent" in load
+            assert "memory_percent" in load
+            assert "cpu_count" in load
+            assert load["cpu_percent"] == 45.5
+            assert load["memory_percent"] == 62.3
+            assert load["cpu_count"] == 8
+
+    def test_get_recommended_concurrency_low_load(self, scheduler):
+        """Test concurrency recommendation under low system load."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            # Low load: CPU 20%, Memory 30%
+            mock_psutil.cpu_percent.return_value = 20.0
+            mock_psutil.virtual_memory.return_value.percent = 30.0
+            mock_psutil.cpu_count.return_value = 8
+
+            concurrency = scheduler.get_recommended_concurrency()
+
+            # Should recommend higher concurrency when load is low
+            assert concurrency >= 4  # At least half of CPU cores
+            assert concurrency <= 8  # Not more than CPU cores
+
+    def test_get_recommended_concurrency_high_load(self, scheduler):
+        """Test concurrency recommendation under high system load."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            # High load: CPU 80%, Memory 85%
+            mock_psutil.cpu_percent.return_value = 80.0
+            mock_psutil.virtual_memory.return_value.percent = 85.0
+            mock_psutil.cpu_count.return_value = 8
+
+            concurrency = scheduler.get_recommended_concurrency()
+
+            # Should recommend lower concurrency when load is high
+            assert concurrency <= 2  # Reduced concurrency
+            assert concurrency >= 1  # At least 1
+
+    def test_get_recommended_concurrency_moderate_load(self, scheduler):
+        """Test concurrency recommendation under moderate system load."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            # Moderate load: CPU 50%, Memory 55%
+            mock_psutil.cpu_percent.return_value = 50.0
+            mock_psutil.virtual_memory.return_value.percent = 55.0
+            mock_psutil.cpu_count.return_value = 8
+
+            concurrency = scheduler.get_recommended_concurrency()
+
+            # Should recommend moderate concurrency
+            assert concurrency >= 2
+            assert concurrency <= 6
+
+    def test_schedule_batch_basic(self, scheduler, mock_state_manager, mock_db):
+        """Test basic batch scheduling."""
+        project_ids = ["proj-1", "proj-2", "proj-3"]
+
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            mock_psutil.cpu_percent.return_value = 30.0
+            mock_psutil.virtual_memory.return_value.percent = 40.0
+            mock_psutil.cpu_count.return_value = 8
+
+            # Mock batch creation - return the batch_id that was passed in
+            def create_batch_side_effect(**kwargs):
+                return {
+                    "id": kwargs["batch_id"],
+                    "status": "queued"
+                }
+            mock_state_manager.create_batch.side_effect = create_batch_side_effect
+
+            # Mock BatchJob creation
+            mock_batch_job = MagicMock()
+            mock_db.add.return_value = None
+            mock_db.commit.return_value = None
+
+            result = scheduler.schedule_batch(
+                project_ids=project_ids,
+                priority="normal"
+            )
+
+            assert "batch_id" in result
+            assert result["status"] == "queued"
+            assert "concurrency" in result
+
+            # Verify batch was created in state manager
+            mock_state_manager.create_batch.assert_called_once()
+
+    def test_schedule_batch_with_custom_concurrency(self, scheduler, mock_state_manager):
+        """Test batch scheduling with explicit concurrency override."""
+        project_ids = ["proj-1", "proj-2"]
+        batch_id = "test-batch-id"
+
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            mock_psutil.cpu_percent.return_value = 30.0
+            mock_psutil.virtual_memory.return_value.percent = 40.0
+            mock_psutil.cpu_count.return_value = 8
+
+            mock_state_manager.create_batch.return_value = {
+                "id": batch_id,
+                "status": "queued"
+            }
+
+            result = scheduler.schedule_batch(
+                project_ids=project_ids,
+                priority="high",
+                concurrency=5
+            )
+
+            # Should use the explicitly provided concurrency
+            assert result["concurrency"] == 5
+
+    def test_schedule_batch_high_priority(self, scheduler, mock_state_manager):
+        """Test that high priority batches get higher Celery priority."""
+        project_ids = ["proj-1"]
+        batch_id = "test-batch-id"
+
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            mock_psutil.cpu_percent.return_value = 30.0
+            mock_psutil.virtual_memory.return_value.percent = 40.0
+            mock_psutil.cpu_count.return_value = 8
+
+            mock_state_manager.create_batch.return_value = {
+                "id": batch_id,
+                "status": "queued"
+            }
+
+            result = scheduler.schedule_batch(
+                project_ids=project_ids,
+                priority="high"
+            )
+
+            # Verify high priority was passed to state manager
+            call_args = mock_state_manager.create_batch.call_args
+            assert call_args[1]["priority"] == "high"
+
+    def test_schedule_batch_validates_priority(self, scheduler):
+        """Test that invalid priority raises error."""
+        with pytest.raises(ValueError, match="Invalid priority"):
+            scheduler.schedule_batch(
+                project_ids=["proj-1"],
+                priority="invalid"
+            )
+
+    def test_schedule_batch_validates_project_ids(self, scheduler):
+        """Test that empty project list raises error."""
+        with pytest.raises(ValueError, match="project_ids cannot be empty"):
+            scheduler.schedule_batch(
+                project_ids=[],
+                priority="normal"
+            )
+
+    def test_adjust_concurrency_dynamically(self, scheduler):
+        """Test dynamic concurrency adjustment based on system load."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            # Start with low load
+            mock_psutil.cpu_percent.return_value = 20.0
+            mock_psutil.virtual_memory.return_value.percent = 30.0
+            mock_psutil.cpu_count.return_value = 8
+
+            initial_concurrency = scheduler.get_recommended_concurrency()
+
+            # Load increases
+            mock_psutil.cpu_percent.return_value = 85.0
+            mock_psutil.virtual_memory.return_value.percent = 90.0
+
+            adjusted_concurrency = scheduler.get_recommended_concurrency()
+
+            # Concurrency should decrease under high load
+            assert adjusted_concurrency < initial_concurrency
+
+    def test_get_queue_stats(self, scheduler, mock_state_manager):
+        """Test getting queue statistics."""
+        # Mock active batches
+        mock_state_manager.list_active_batches.return_value = [
+            {"id": "batch-1", "status": "queued", "priority": "high"},
+            {"id": "batch-2", "status": "running", "priority": "normal"},
+            {"id": "batch-3", "status": "queued", "priority": "low"},
+        ]
+
+        stats = scheduler.get_queue_stats()
+
+        assert stats["total_active"] == 3
+        assert stats["queued"] == 2
+        assert stats["running"] == 1
+        assert stats["by_priority"]["high"] == 1
+        assert stats["by_priority"]["normal"] == 1
+        assert stats["by_priority"]["low"] == 1
+
+    def test_get_scheduler_status(self, scheduler):
+        """Test getting overall scheduler status."""
+        with patch('app.services.batch.scheduler.psutil') as mock_psutil:
+            mock_psutil.cpu_percent.return_value = 45.0
+            mock_psutil.virtual_memory.return_value.percent = 55.0
+            mock_psutil.cpu_count.return_value = 8
+
+            status = scheduler.get_scheduler_status()
+
+            assert "system_load" in status
+            assert "recommended_concurrency" in status
+            assert status["system_load"]["cpu_percent"] == 45.0
+            assert status["system_load"]["memory_percent"] == 55.0
+            assert isinstance(status["recommended_concurrency"], int)
