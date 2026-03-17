@@ -696,7 +696,7 @@ class TestBatchAPI:
                 mock_task.delay.return_value = MagicMock(id="celery-task-123")
 
                 response = test_client.post(
-                    "/api/batch",
+                    "/api/batch/create",
                     json={
                         "project_ids": [proj1_id, proj2_id],
                         "name": "Test Batch",
@@ -750,7 +750,7 @@ class TestBatchAPI:
                 "failed_projects": "0",
             }
 
-            response = test_client.get(f"/api/batch/{batch_id}")
+            response = test_client.get(f"/api/batch/status/{batch_id}")
 
             assert response.status_code == 200
             data = response.json()
@@ -761,7 +761,7 @@ class TestBatchAPI:
         """Test getting non-existent batch status."""
         test_client = client['client']
         batch_id = str(uuid.uuid4())
-        response = test_client.get(f"/api/batch/{batch_id}")
+        response = test_client.get(f"/api/batch/status/{batch_id}")
         assert response.status_code == 404
 
     def test_get_batch_progress(self, client):
@@ -821,7 +821,7 @@ class TestBatchAPI:
                 mock_get_manager.return_value = mock_manager
                 mock_manager.get_task_ids.return_value = ["task-1", "task-2"]
 
-                response = test_client.post(f"/api/batch/{batch_id}/cancel")
+                response = test_client.post(f"/api/batch/cancel/{batch_id}")
 
                 assert response.status_code == 200
                 data = response.json()
@@ -834,7 +834,7 @@ class TestBatchAPI:
         """Test cancelling non-existent batch."""
         test_client = client['client']
         batch_id = str(uuid.uuid4())
-        response = test_client.post(f"/api/batch/{batch_id}/cancel")
+        response = test_client.post(f"/api/batch/cancel/{batch_id}")
         assert response.status_code == 404
 
     def test_list_active_batches(self, client):
@@ -867,7 +867,7 @@ class TestBatchAPI:
         finally:
             db.close()
 
-        response = test_client.get("/api/batch")
+        response = test_client.get("/api/batch/list")
 
         assert response.status_code == 200
         data = response.json()
@@ -880,7 +880,7 @@ class TestBatchAPI:
 
         # Test with invalid priority
         response = test_client.post(
-            "/api/batch",
+            "/api/batch/create",
             json={
                 "project_ids": ["proj-1"],
                 "priority": "invalid",
@@ -891,7 +891,7 @@ class TestBatchAPI:
 
         # Test with empty project_ids
         response = test_client.post(
-            "/api/batch",
+            "/api/batch/create",
             json={
                 "project_ids": [],
             }

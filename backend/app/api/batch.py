@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/", response_model=BatchResponse, status_code=201)
+@router.post("/create", response_model=BatchResponse, status_code=201)
 async def create_batch(
     batch_in: BatchCreate,
     db: Session = Depends(get_db)
@@ -129,7 +129,7 @@ async def create_batch(
         raise HTTPException(status_code=500, detail=f"Failed to create batch: {str(e)}")
 
 
-@router.get("/{batch_id}", response_model=BatchResponse)
+@router.get("/status/{batch_id}", response_model=BatchResponse)
 async def get_batch_status(
     batch_id: str,
     db: Session = Depends(get_db)
@@ -212,7 +212,7 @@ async def get_batch_progress(batch_id: str):
     return BatchProgressResponse(**progress)
 
 
-@router.post("/{batch_id}/cancel", response_model=BatchCancelResponse)
+@router.post("/cancel/{batch_id}", response_model=BatchCancelResponse)
 async def cancel_batch(
     batch_id: str,
     db: Session = Depends(get_db)
@@ -281,7 +281,7 @@ async def cancel_batch(
     )
 
 
-@router.get("/", response_model=BatchListResponse)
+@router.get("/list", response_model=BatchListResponse)
 async def list_batches(
     status: str = Query(
         None,
