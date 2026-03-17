@@ -8,7 +8,7 @@ celery_app = Celery(
     "video_automation",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.video_tasks"]
+    include=["app.tasks.video_tasks", "app.tasks.batch_tasks"]
 )
 
 # Celery configuration

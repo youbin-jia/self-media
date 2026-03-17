@@ -462,3 +462,439 @@ class TestGetBatchStateManager:
 
             assert manager is not None
             mock_redis.assert_called_once()
+
+
+class TestBatchTasks:
+    """Tests for Celery batch processing tasks."""
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_state_manager(self):
+        """Create a mock BatchStateManager."""
+        return MagicMock()
+
+    @patch('app.tasks.batch_tasks.SessionLocal')
+    @patch('app.tasks.batch_tasks.get_batch_state_manager')
+    def test_process_batch_task_success(self, mock_get_manager, mock_session_local, mock_db, mock_state_manager):
+        """Test successful batch processing task."""
+        from app.tasks.batch_tasks import process_batch_task
+
+        # Setup mocks
+        mock_session_local.return_value = mock_db
+        mock_get_manager.return_value = mock_state_manager
+
+        batch_id = str(uuid.uuid4())
+        project_ids = ["proj-1", "proj-2", "proj-3"]
+
+        # Mock batch state
+        mock_state_manager.get_batch.return_value = {
+            "id": batch_id,
+            "project_ids": project_ids,
+            "status": "queued",
+            "total_projects": "3",
+        }
+
+        # Mock project objects
+        mock_project = MagicMock()
+        mock_project.id = "proj-1"
+        mock_project.status = "pending"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_project
+
+        # Mock video task
+        with patch('app.tasks.batch_tasks.synthesize_video_task') as mock_video_task:
+            mock_video_task.delay.return_value = MagicMock(id="task-123")
+
+            # Execute task
+            result = process_batch_task(batch_id)
+
+            # Verify batch status was updated to running
+            mock_state_manager.update_status.assert_called()
+
+            # Verify video tasks were spawned for each project
+            assert mock_video_task.delay.call_count == 3
+
+            # Verify task IDs were recorded
+            assert mock_state_manager.add_task_id.call_count == 3
+
+            # Verify final status
+            assert mock_state_manager.update_status.call_count >= 2  # running + completed
+
+    @patch('app.tasks.batch_tasks.SessionLocal')
+    @patch('app.tasks.batch_tasks.get_batch_state_manager')
+    def test_process_batch_task_with_priority(self, mock_get_manager, mock_session_local, mock_db, mock_state_manager):
+        """Test batch processing with priority mapping."""
+        from app.tasks.batch_tasks import process_batch_task
+
+        # Setup mocks
+        mock_session_local.return_value = mock_db
+        mock_get_manager.return_value = mock_state_manager
+
+        batch_id = str(uuid.uuid4())
+        project_ids = ["proj-1"]
+
+        # Mock batch state with high priority
+        mock_state_manager.get_batch.return_value = {
+            "id": batch_id,
+            "project_ids": project_ids,
+            "status": "queued",
+            "priority": "high",
+            "total_projects": "1",
+        }
+
+        # Mock project
+        mock_project = MagicMock()
+        mock_project.id = "proj-1"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_project
+
+        # Mock video task
+        with patch('app.tasks.batch_tasks.synthesize_video_task') as mock_video_task:
+            mock_video_task.delay.return_value = MagicMock(id="task-456")
+
+            result = process_batch_task(batch_id)
+
+            # Verify task was called with correct priority (9 for high)
+            mock_video_task.delay.assert_called_once()
+            call_kwargs = mock_video_task.delay.call_args[1]
+            assert call_kwargs.get('priority') == 9
+
+    @patch('app.tasks.batch_tasks.SessionLocal')
+    @patch('app.tasks.batch_tasks.get_batch_state_manager')
+    def test_process_batch_task_batch_not_found(self, mock_get_manager, mock_session_local, mock_state_manager):
+        """Test batch processing when batch doesn't exist."""
+        from app.tasks.batch_tasks import process_batch_task
+
+        mock_session_local.return_value = MagicMock()
+        mock_get_manager.return_value = mock_state_manager
+        mock_state_manager.get_batch.return_value = None
+
+        batch_id = str(uuid.uuid4())
+
+        with pytest.raises(ValueError, match="Batch .* not found"):
+            process_batch_task(batch_id)
+
+    @patch('app.tasks.batch_tasks.SessionLocal')
+    @patch('app.tasks.batch_tasks.get_batch_state_manager')
+    def test_process_batch_task_handles_errors(self, mock_get_manager, mock_session_local, mock_db, mock_state_manager):
+        """Test batch processing error handling - missing project is gracefully handled."""
+        from app.tasks.batch_tasks import process_batch_task
+
+        mock_session_local.return_value = mock_db
+        mock_get_manager.return_value = mock_state_manager
+
+        batch_id = str(uuid.uuid4())
+        project_ids = ["proj-1", "proj-2"]
+
+        mock_state_manager.get_batch.return_value = {
+            "id": batch_id,
+            "project_ids": project_ids,
+            "status": "queued",
+            "total_projects": "2",
+        }
+
+        # Mock first project not found, second found
+        mock_project = MagicMock()
+        mock_project.id = "proj-2"
+        mock_db.query.return_value.filter.return_value.first.side_effect = [
+            None,  # First project not found
+            mock_project,  # Second project found
+        ]
+
+        # Mock video task
+        with patch('app.tasks.batch_tasks.synthesize_video_task') as mock_video_task:
+            mock_video_task.delay.return_value = MagicMock(id="task-456")
+
+            result = process_batch_task(batch_id)
+
+            # Verify error was recorded for missing project
+            mock_state_manager.add_error.assert_called()
+
+            # Verify failed count was incremented
+            mock_state_manager.increment_failed.assert_called()
+
+            # Verify batch still completed (graceful handling)
+            assert result["status"] == "success"
+            assert result["tasks_spawned"] == 1  # Only one valid project
+
+
+class TestBatchAPI:
+    """Tests for batch processing API endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client with test database."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.database import Base, get_db
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        # Create in-memory test database
+        SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+        engine = create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        def override_get_db():
+            try:
+                db = TestingSessionLocal()
+                yield db
+            finally:
+                db.close()
+
+        # Override dependency
+        app.dependency_overrides[get_db] = override_get_db
+
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+
+        client = TestClient(app)
+
+        # Yield both client and test session factory
+        yield {
+            'client': client,
+            'SessionLocal': TestingSessionLocal
+        }
+
+        # Cleanup
+        app.dependency_overrides.clear()
+
+    def test_create_batch(self, client):
+        """Test creating a batch job via API."""
+        # Create test projects first using test database
+        from app.models.project import Project
+
+        # Get test session factory and client from fixture
+        test_session = client['SessionLocal']
+        test_client = client['client']
+
+        db = test_session()
+        try:
+            project1 = Project(title="Project 1", status="pending")
+            project2 = Project(title="Project 2", status="pending")
+            db.add(project1)
+            db.add(project2)
+            db.commit()
+            proj1_id = project1.id
+            proj2_id = project2.id
+        finally:
+            db.close()
+
+        # Mock state manager and Celery task
+        with patch('app.api.batch.get_batch_state_manager') as mock_get_manager:
+            with patch('app.api.batch.process_batch_task') as mock_task:
+                mock_manager = MagicMock()
+                mock_get_manager.return_value = mock_manager
+                mock_manager.create_batch.return_value = {"id": "test-batch-id", "status": "queued"}
+                mock_task.delay.return_value = MagicMock(id="celery-task-123")
+
+                response = test_client.post(
+                    "/api/batch",
+                    json={
+                        "project_ids": [proj1_id, proj2_id],
+                        "name": "Test Batch",
+                        "priority": "high",
+                        "concurrency": 3,
+                    }
+                )
+
+                assert response.status_code == 201
+                data = response.json()
+                assert "batch_id" in data
+                assert data["status"] == "queued"
+
+                # Verify batch was created in Redis
+                mock_manager.create_batch.assert_called_once()
+
+                # Verify Celery task was spawned
+                mock_task.delay.assert_called_once()
+
+    def test_get_batch_status(self, client):
+        """Test getting batch status via API."""
+        # Create a batch in database
+        from app.models.batch import BatchJob
+
+        test_session = client['SessionLocal']
+        test_client = client['client']
+
+        db = test_session()
+        try:
+            batch = BatchJob(
+                id=str(uuid.uuid4()),
+                name="Test Batch",
+                project_ids=["proj-1", "proj-2"],
+                total_projects=2,
+                status="running",
+            )
+            db.add(batch)
+            db.commit()
+            batch_id = batch.id
+        finally:
+            db.close()
+
+        with patch('app.api.batch.get_batch_state_manager') as mock_get_manager:
+            mock_manager = MagicMock()
+            mock_get_manager.return_value = mock_manager
+            mock_manager.get_batch.return_value = {
+                "id": batch_id,
+                "status": "running",
+                "total_projects": "2",
+                "completed_projects": "1",
+                "failed_projects": "0",
+            }
+
+            response = test_client.get(f"/api/batch/{batch_id}")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["batch_id"] == batch_id
+            assert data["status"] == "running"
+
+    def test_get_batch_status_not_found(self, client):
+        """Test getting non-existent batch status."""
+        test_client = client['client']
+        batch_id = str(uuid.uuid4())
+        response = test_client.get(f"/api/batch/{batch_id}")
+        assert response.status_code == 404
+
+    def test_get_batch_progress(self, client):
+        """Test getting batch progress via API."""
+        test_client = client['client']
+        batch_id = str(uuid.uuid4())
+
+        with patch('app.api.batch.get_batch_state_manager') as mock_get_manager:
+            mock_manager = MagicMock()
+            mock_get_manager.return_value = mock_manager
+            mock_manager.get_progress.return_value = {
+                "batch_id": batch_id,
+                "status": "running",
+                "total": 10,
+                "completed": 5,
+                "failed": 1,
+                "processed": 6,
+                "remaining": 4,
+                "progress_percentage": 60.0,
+                "success_rate": 50.0,
+            }
+
+            response = test_client.get(f"/api/batch/{batch_id}/progress")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["batch_id"] == batch_id
+            assert data["progress_percentage"] == 60.0
+            assert data["success_rate"] == 50.0
+
+    def test_cancel_batch(self, client):
+        """Test cancelling a batch via API."""
+        # Create a running batch in database
+        from app.models.batch import BatchJob
+
+        test_session = client['SessionLocal']
+        test_client = client['client']
+
+        db = test_session()
+        try:
+            batch = BatchJob(
+                id=str(uuid.uuid4()),
+                name="Test Batch",
+                project_ids=["proj-1"],
+                total_projects=1,
+                status="running",
+            )
+            db.add(batch)
+            db.commit()
+            batch_id = batch.id
+        finally:
+            db.close()
+
+        with patch('app.api.batch.get_batch_state_manager') as mock_get_manager:
+            with patch('app.api.batch.AsyncResult') as mock_async_result:
+                mock_manager = MagicMock()
+                mock_get_manager.return_value = mock_manager
+                mock_manager.get_task_ids.return_value = ["task-1", "task-2"]
+
+                response = test_client.post(f"/api/batch/{batch_id}/cancel")
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "cancelled"
+
+                # Verify status was updated
+                mock_manager.update_status.assert_called()
+
+    def test_cancel_batch_not_found(self, client):
+        """Test cancelling non-existent batch."""
+        test_client = client['client']
+        batch_id = str(uuid.uuid4())
+        response = test_client.post(f"/api/batch/{batch_id}/cancel")
+        assert response.status_code == 404
+
+    def test_list_active_batches(self, client):
+        """Test listing active batches via API."""
+        # Create some batches in database
+        from app.models.batch import BatchJob
+
+        test_session = client['SessionLocal']
+        test_client = client['client']
+
+        db = test_session()
+        try:
+            batch1 = BatchJob(
+                id=str(uuid.uuid4()),
+                name="Running Batch",
+                project_ids=["proj-1"],
+                total_projects=1,
+                status="running",
+            )
+            batch2 = BatchJob(
+                id=str(uuid.uuid4()),
+                name="Completed Batch",
+                project_ids=["proj-2"],
+                total_projects=1,
+                status="completed",
+            )
+            db.add(batch1)
+            db.add(batch2)
+            db.commit()
+        finally:
+            db.close()
+
+        response = test_client.get("/api/batch")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "batches" in data
+        assert len(data["batches"]) >= 1
+
+    def test_create_batch_validates_input(self, client):
+        """Test that batch creation validates input."""
+        test_client = client['client']
+
+        # Test with invalid priority
+        response = test_client.post(
+            "/api/batch",
+            json={
+                "project_ids": ["proj-1"],
+                "priority": "invalid",
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
+
+        # Test with empty project_ids
+        response = test_client.post(
+            "/api/batch",
+            json={
+                "project_ids": [],
+            }
+        )
+
+        assert response.status_code == 422  # Validation error
