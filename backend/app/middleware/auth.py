@@ -92,7 +92,7 @@ def require_role(roles: List[str]):
     Decorator to check user roles.
 
     Creates a decorator that validates the current user has one of the
-    allowed roles. Admin role has access to all routes.
+    allowed roles.
 
     Args:
         roles: List of allowed role names (e.g., ["admin", "editor"])
@@ -117,15 +117,11 @@ def require_role(roles: List[str]):
                     detail="Not authenticated"
                 )
 
-            # Admin has access to everything
-            if current_user.role == UserRole.ADMIN.value:
-                return func(*args, current_user=current_user, **kwargs)
-
             # Check if user role is in allowed roles
             if current_user.role not in roles:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Permission denied. Required role: {', '.join(roles)}"
+                    detail="Permission denied"
                 )
 
             return func(*args, current_user=current_user, **kwargs)
@@ -139,11 +135,8 @@ def check_project_access(project_id: str, user: User, db: Session) -> bool:
 
     Permission rules:
     - Admin: access all projects
-    - Editor: access owned projects only (owner_id matches user.id)
-    - Viewer: access team member projects only (not implemented yet, returns False)
-
-    Note: Team membership feature will be added in a future phase.
-    Currently, editors can only access projects they own.
+    - Editor: access owned projects or projects where they are a team member
+    - Viewer: access projects where they are a team member
 
     Args:
         project_id: UUID of the project to check access for
@@ -163,15 +156,16 @@ def check_project_access(project_id: str, user: User, db: Session) -> bool:
     if project is None:
         return False
 
-    # Editor can access owned projects
-    if user.role == UserRole.EDITOR.value:
-        return project.owner_id == user.id
+    # Get team members list (handle None case)
+    team_members = project.team_members or []
 
-    # Viewer can only access team member projects (not implemented yet)
-    # For now, viewers have no project access unless team membership is added
+    # Editor can access owned projects or team member projects
+    if user.role == UserRole.EDITOR.value:
+        return (project.owner_id == user.id or
+                user.id in team_members)
+
+    # Viewer can only access team member projects
     if user.role == UserRole.VIEWER.value:
-        # Future: Check team membership
-        # return project.id in [p.id for p in user.team_projects]
-        return False
+        return user.id in team_members
 
     return False

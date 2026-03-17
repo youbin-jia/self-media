@@ -743,16 +743,19 @@ class TestRequireRole:
         result = protected_route(current_user=admin_user)
         assert result["status"] == "success"
 
-    def test_require_role_editor_allowed_for_admin(self, admin_user):
-        """Test that admin can access editor-only routes"""
+    def test_require_role_editor_denied_for_admin_when_not_in_roles(self, admin_user):
+        """Test that admin cannot access editor-only routes when admin not in roles"""
         from app.middleware.auth import require_role
+        from fastapi import HTTPException
 
         @require_role(["editor"])
         def protected_route(current_user: User):
             return {"status": "success"}
 
-        result = protected_route(current_user=admin_user)
-        assert result["status"] == "success"
+        with pytest.raises(HTTPException) as exc_info:
+            protected_route(current_user=admin_user)
+
+        assert exc_info.value.status_code == 403
 
     def test_require_role_editor_allowed_for_editor(self, editor_user):
         """Test that editor can access editor-only routes"""
@@ -975,3 +978,111 @@ class TestCheckProjectAccess:
 
         result = check_project_access(project.id, editor_user, self.db)
         assert result is False
+
+    def test_editor_can_access_team_member_project(self, editor_user):
+        """Test that editor can access project where they are a team member"""
+        # Create project owned by another user
+        other_user = User(
+            id="team-owner-id",
+            username="team_owner",
+            email="team_owner@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+        self.db.add(other_user)
+        project = Project(
+            id="team-project-id",
+            title="Team Project",
+            status="pending",
+            owner_id=other_user.id,
+            team_members=[editor_user.id]
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(project.id, editor_user, self.db)
+        assert result is True
+
+    def test_editor_cannot_access_project_not_owner_not_team_member(self, editor_user, other_project):
+        """Test that editor cannot access project they don't own and aren't team member"""
+        from app.middleware.auth import check_project_access
+
+        # other_project has no team_members set, editor is not owner
+        result = check_project_access(other_project.id, editor_user, self.db)
+        assert result is False
+
+    def test_viewer_can_access_team_member_project(self, viewer_user):
+        """Test that viewer can access project where they are a team member"""
+        # Create project with viewer as team member
+        owner = User(
+            id="viewer-team-owner-id",
+            username="viewer_team_owner",
+            email="viewer_team_owner@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+        self.db.add(owner)
+        project = Project(
+            id="viewer-team-project-id",
+            title="Viewer Team Project",
+            status="pending",
+            owner_id=owner.id,
+            team_members=[viewer_user.id]
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        from app.middleware.auth import check_project_access
+
+        result = check_project_access(project.id, viewer_user, self.db)
+        assert result is True
+
+    def test_viewer_cannot_access_project_not_team_member(self, viewer_user, owned_project):
+        """Test that viewer cannot access project where they are not a team member"""
+        from app.middleware.auth import check_project_access
+
+        # owned_project has no team_members set, viewer is not in team
+        result = check_project_access(owned_project.id, viewer_user, self.db)
+        assert result is False
+
+    def test_project_with_null_team_members(self, editor_user, owned_project):
+        """Test that project with null team_members works correctly"""
+        from app.middleware.auth import check_project_access
+
+        # Ensure owned_project has null team_members
+        owned_project.team_members = None
+        self.db.commit()
+
+        # Editor should still access their own project
+        result = check_project_access(owned_project.id, editor_user, self.db)
+        assert result is True
+
+    def test_multiple_team_members(self, editor_user, viewer_user):
+        """Test project with multiple team members"""
+        owner = User(
+            id="multi-team-owner-id",
+            username="multi_team_owner",
+            email="multi_team_owner@example.com",
+            hashed_password="hashed",
+            role=UserRole.EDITOR
+        )
+        self.db.add(owner)
+        project = Project(
+            id="multi-team-project-id",
+            title="Multi Team Project",
+            status="pending",
+            owner_id=owner.id,
+            team_members=[editor_user.id, viewer_user.id, "some-other-id"]
+        )
+        self.db.add(project)
+        self.db.commit()
+
+        from app.middleware.auth import check_project_access
+
+        # Both editor and viewer should have access
+        result = check_project_access(project.id, editor_user, self.db)
+        assert result is True
+        result = check_project_access(project.id, viewer_user, self.db)
+        assert result is True
