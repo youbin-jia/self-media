@@ -1,9 +1,13 @@
 # backend/app/config.py
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    # Environment
+    ENVIRONMENT: str = "development"
+
     # Database
     DATABASE_URL: str = "sqlite:///./data/video_automation.db"
 
@@ -63,6 +67,19 @@ class Settings(BaseSettings):
 
     # Storage
     DATA_DIR: str = "./data"
+
+    @field_validator("JWT_SECRET_KEY")
+    @classmethod
+    def validate_jwt_secret(cls, v: str, info) -> str:
+        """Validate JWT_SECRET_KEY is changed in production environment."""
+        environment = info.data.get("ENVIRONMENT", "development")
+        if environment == "production":
+            if "change-in-production" in v or v == "your-jwt-secret-key-change-in-production":
+                raise ValueError(
+                    "SECURITY ERROR: JWT_SECRET_KEY must be changed from default value in production! "
+                    "Set a secure JWT_SECRET_KEY environment variable."
+                )
+        return v
 
     class Config:
         env_file = ".env"

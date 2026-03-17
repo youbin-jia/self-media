@@ -498,3 +498,65 @@ class TestJWTHandler:
         # Check that iat is within a reasonable range (within 1 second)
         assert abs((iat - before_create).total_seconds()) < 1
         assert abs((after_create - iat).total_seconds()) < 2
+
+
+class TestConfigSecurity:
+    """Test cases for configuration security validation"""
+
+    def test_default_jwt_secret_allowed_in_development(self):
+        """Test that default JWT secret is allowed in development environment"""
+        from pydantic import ValidationError
+        from app.config import Settings
+
+        # Should not raise in development (default)
+        settings = Settings(
+            ENVIRONMENT="development",
+            JWT_SECRET_KEY="your-jwt-secret-key-change-in-production"
+        )
+        assert settings.JWT_SECRET_KEY == "your-jwt-secret-key-change-in-production"
+
+    def test_custom_jwt_secret_allowed_in_production(self):
+        """Test that custom JWT secret is allowed in production environment"""
+        from pydantic import ValidationError
+        from app.config import Settings
+
+        # Should not raise with custom secret in production
+        settings = Settings(
+            ENVIRONMENT="production",
+            JWT_SECRET_KEY="my-super-secure-production-key-123"
+        )
+        assert settings.JWT_SECRET_KEY == "my-super-secure-production-key-123"
+
+    def test_default_jwt_secret_blocked_in_production(self):
+        """Test that default JWT secret is blocked in production environment"""
+        from pydantic import ValidationError
+        from app.config import Settings
+
+        # Should raise with default secret in production
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(
+                ENVIRONMENT="production",
+                JWT_SECRET_KEY="your-jwt-secret-key-change-in-production"
+            )
+
+        # Verify the error message mentions the security issue
+        errors = exc_info.value.errors()
+        assert len(errors) == 1
+        assert "JWT_SECRET_KEY" in str(errors[0])
+        assert "must be changed" in str(errors[0]).lower()
+
+    def test_jwt_secret_with_change_in_production_blocked_in_production(self):
+        """Test that JWT secret containing 'change-in-production' is blocked in production"""
+        from pydantic import ValidationError
+        from app.config import Settings
+
+        # Should raise when secret contains 'change-in-production' in production
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(
+                ENVIRONMENT="production",
+                JWT_SECRET_KEY="please-change-in-production-now"
+            )
+
+        errors = exc_info.value.errors()
+        assert len(errors) == 1
+        assert "JWT_SECRET_KEY" in str(errors[0])
