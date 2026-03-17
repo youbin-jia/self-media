@@ -1,8 +1,6 @@
 # backend/app/services/effects/dynamic_subtitle.py
 """Dynamic Subtitle Effects - Generate VideoClip objects with animated subtitles"""
-import io
 import logging
-import math
 from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
@@ -89,64 +87,70 @@ class DynamicSubtitleEffect:
 
         # Create RGBA image with transparent background
         img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        # Parse background color if set
-        if style_config.get("bg_color"):
-            bg_color = self._parse_color(style_config["bg_color"])
-            # Draw semi-transparent background rectangle
-            bg_img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-            bg_draw = ImageDraw.Draw(bg_img)
-            bg_draw.rectangle([(0, height - 150), (width, height)], fill=bg_color)
-            img = Image.alpha_composite(img, bg_img)
+        try:
             draw = ImageDraw.Draw(img)
 
-        # Get font
-        font = self._get_font(
-            style_config["font_family"],
-            style_config["font_size"]
-        )
+            # Parse background color if set
+            if style_config.get("bg_color"):
+                bg_color = self._parse_color(style_config["bg_color"])
+                # Draw semi-transparent background rectangle
+                bg_img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+                try:
+                    bg_draw = ImageDraw.Draw(bg_img)
+                    bg_draw.rectangle([(0, height - 150), (width, height)], fill=bg_color)
+                    img = Image.alpha_composite(img, bg_img)
+                    draw = ImageDraw.Draw(img)
+                finally:
+                    bg_img.close()
 
-        # Calculate text position (centered horizontally, near bottom)
-        if position is None:
-            # Get text bounding box
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-
-            x = (width - text_width) // 2
-            y = height - text_height - 100  # 100px from bottom
-        else:
-            x, y = position
-
-        # Draw stroke if configured
-        stroke_color = style_config.get("stroke_color")
-        stroke_width = style_config.get("stroke_width", 0)
-
-        if stroke_color and stroke_width > 0:
-            stroke_rgba = self._parse_color(stroke_color)
-            # Draw stroke by offsetting text
-            for offset_x in range(-stroke_width, stroke_width + 1):
-                for offset_y in range(-stroke_width, stroke_width + 1):
-                    if offset_x ** 2 + offset_y ** 2 <= stroke_width ** 2:
-                        draw.text(
-                            (x + offset_x, y + offset_y),
-                            text,
-                            font=font,
-                            fill=stroke_rgba
-                        )
-
-        # If highlight_words provided, render with highlighting
-        if highlight_words:
-            self._render_text_with_highlights(
-                draw, text, highlight_words, font, style_config, x, y
+            # Get font
+            font = self._get_font(
+                style_config["font_family"],
+                style_config["font_size"]
             )
-        else:
-            # Draw main text
-            text_color = self._parse_color(style_config["color"])
-            draw.text((x, y), text, font=font, fill=text_color)
 
-        return np.array(img)
+            # Calculate text position (centered horizontally, near bottom)
+            if position is None:
+                # Get text bounding box
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+
+                x = (width - text_width) // 2
+                y = height - text_height - 100  # 100px from bottom
+            else:
+                x, y = position
+
+            # Draw stroke if configured AND not using highlights (highlights draw their own stroke)
+            stroke_color = style_config.get("stroke_color")
+            stroke_width = style_config.get("stroke_width", 0)
+
+            if stroke_color and stroke_width > 0 and not highlight_words:
+                stroke_rgba = self._parse_color(stroke_color)
+                # Draw stroke by offsetting text
+                for offset_x in range(-stroke_width, stroke_width + 1):
+                    for offset_y in range(-stroke_width, stroke_width + 1):
+                        if offset_x ** 2 + offset_y ** 2 <= stroke_width ** 2:
+                            draw.text(
+                                (x + offset_x, y + offset_y),
+                                text,
+                                font=font,
+                                fill=stroke_rgba
+                            )
+
+            # If highlight_words provided, render with highlighting
+            if highlight_words:
+                self._render_text_with_highlights(
+                    draw, text, highlight_words, font, style_config, x, y
+                )
+            else:
+                # Draw main text
+                text_color = self._parse_color(style_config["color"])
+                draw.text((x, y), text, font=font, fill=text_color)
+
+            return np.array(img)
+        finally:
+            img.close()
 
     def _render_text_with_highlights(
         self,
