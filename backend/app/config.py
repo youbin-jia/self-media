@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     API_KEY: str = "your-api-key-change-in-production"
 
+    # JWT Settings
+    JWT_SECRET_KEY: str = "your-jwt-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_HOURS: int = 168  # 7 days
+
     # Storage
     DATA_DIR: str = "./data"
 

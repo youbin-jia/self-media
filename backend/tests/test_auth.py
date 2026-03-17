@@ -1,13 +1,17 @@
 # backend/tests/test_auth.py
 """Tests for User model and authentication"""
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 from app.database import Base
 from app.models.user import User, UserRole
 from app.models.project import Project
+from app.services.auth.jwt_handler import JWTHandler
+from app.config import settings
+import jwt
+import time
 
 
 class TestUserModel:
@@ -310,3 +314,187 @@ class TestUserModel:
         self.db.add(user)
         with pytest.raises(IntegrityError):
             self.db.commit()
+
+
+class TestJWTHandler:
+    """Test cases for JWT Handler"""
+
+    @pytest.fixture
+    def jwt_handler(self):
+        """Create a JWTHandler instance for testing"""
+        return JWTHandler()
+
+    @pytest.fixture
+    def sample_user_data(self):
+        """Sample user data for token creation"""
+        return {
+            "user_id": "123e4567-e89b-12d3-a456-426614174000",
+            "username": "testuser",
+            "role": "editor"
+        }
+
+    def test_create_access_token(self, jwt_handler, sample_user_data):
+        """Test creating an access token"""
+        token = jwt_handler.create_access_token(
+            user_id=sample_user_data["user_id"],
+            username=sample_user_data["username"],
+            role=sample_user_data["role"]
+        )
+
+        assert token is not None
+        assert isinstance(token, str)
+        # Verify it's a valid JWT (3 parts separated by dots)
+        assert token.count('.') == 2
+
+    def test_decode_valid_token(self, jwt_handler, sample_user_data):
+        """Test decoding a valid token"""
+        token = jwt_handler.create_access_token(
+            user_id=sample_user_data["user_id"],
+            username=sample_user_data["username"],
+            role=sample_user_data["role"]
+        )
+
+        payload = jwt_handler.decode_token(token)
+
+        assert payload is not None
+        assert payload["user_id"] == sample_user_data["user_id"]
+        assert payload["username"] == sample_user_data["username"]
+        assert payload["role"] == sample_user_data["role"]
+        assert "exp" in payload
+        assert "iat" in payload
+
+    def test_token_expiration_time(self, jwt_handler, sample_user_data):
+        """Test that token has correct expiration time (7 days by default)"""
+        token = jwt_handler.create_access_token(
+            user_id=sample_user_data["user_id"],
+            username=sample_user_data["username"],
+            role=sample_user_data["role"]
+        )
+
+        payload = jwt_handler.decode_token(token)
+
+        # Check expiration is approximately 7 days from now
+        exp = datetime.fromtimestamp(payload["exp"])
+        iat = datetime.fromtimestamp(payload["iat"])
+
+        # Should be approximately 7 days (168 hours) difference
+        delta = exp - iat
+        expected_delta = timedelta(hours=settings.JWT_ACCESS_TOKEN_EXPIRE_HOURS)
+
+        # Allow 1 second tolerance
+        assert abs(delta.total_seconds() - expected_delta.total_seconds()) < 1
+
+    def test_expired_token_returns_none(self, jwt_handler, sample_user_data):
+        """Test that expired tokens return None when decoded"""
+        # Create an already expired token by using negative expiration
+        expired_token = jwt.encode(
+            {
+                "user_id": sample_user_data["user_id"],
+                "username": sample_user_data["username"],
+                "role": sample_user_data["role"],
+                "exp": datetime.utcnow() - timedelta(hours=1),
+                "iat": datetime.utcnow() - timedelta(hours=2)
+            },
+            settings.JWT_SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM
+        )
+
+        payload = jwt_handler.decode_token(expired_token)
+        assert payload is None
+
+    def test_invalid_token_returns_none(self, jwt_handler):
+        """Test that invalid tokens return None when decoded"""
+        # Completely invalid token string
+        invalid_token = "invalid.token.string"
+
+        payload = jwt_handler.decode_token(invalid_token)
+        assert payload is None
+
+    def test_token_with_wrong_secret_returns_none(self, jwt_handler, sample_user_data):
+        """Test that token signed with wrong secret returns None"""
+        wrong_secret_token = jwt.encode(
+            {
+                "user_id": sample_user_data["user_id"],
+                "username": sample_user_data["username"],
+                "role": sample_user_data["role"],
+                "exp": datetime.utcnow() + timedelta(days=7),
+                "iat": datetime.utcnow()
+            },
+            "wrong-secret-key",
+            algorithm=settings.JWT_ALGORITHM
+        )
+
+        payload = jwt_handler.decode_token(wrong_secret_token)
+        assert payload is None
+
+    def test_token_with_missing_claims_returns_payload(self, jwt_handler):
+        """Test that token with missing required claims still returns payload"""
+        # Token missing 'role' claim
+        token_without_role = jwt.encode(
+            {
+                "user_id": "some-user-id",
+                "username": "someuser",
+                "exp": datetime.utcnow() + timedelta(days=7),
+                "iat": datetime.utcnow()
+            },
+            settings.JWT_SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM
+        )
+
+        # decode_token should still return the payload (validation happens elsewhere)
+        payload = jwt_handler.decode_token(token_without_role)
+        assert payload is not None
+        assert payload["user_id"] == "some-user-id"
+
+    def test_create_token_with_custom_expiration(self, jwt_handler, sample_user_data):
+        """Test creating token with custom expiration time"""
+        custom_expire_hours = 24
+
+        token = jwt_handler.create_access_token(
+            user_id=sample_user_data["user_id"],
+            username=sample_user_data["username"],
+            role=sample_user_data["role"],
+            expires_delta=timedelta(hours=custom_expire_hours)
+        )
+
+        payload = jwt_handler.decode_token(token)
+
+        exp = datetime.fromtimestamp(payload["exp"])
+        iat = datetime.fromtimestamp(payload["iat"])
+        delta = exp - iat
+
+        expected_delta = timedelta(hours=custom_expire_hours)
+        assert abs(delta.total_seconds() - expected_delta.total_seconds()) < 1
+
+    def test_all_roles_in_token(self, jwt_handler):
+        """Test that all valid roles can be encoded in token"""
+        roles = ["admin", "editor", "viewer"]
+
+        for role in roles:
+            token = jwt_handler.create_access_token(
+                user_id=f"user-{role}",
+                username=f"user_{role}",
+                role=role
+            )
+            payload = jwt_handler.decode_token(token)
+            assert payload["role"] == role
+
+    def test_token_contains_issued_at(self, jwt_handler, sample_user_data):
+        """Test that token contains issued at (iat) timestamp"""
+        before_create = datetime.now(timezone.utc)
+        token = jwt_handler.create_access_token(
+            user_id=sample_user_data["user_id"],
+            username=sample_user_data["username"],
+            role=sample_user_data["role"]
+        )
+        after_create = datetime.now(timezone.utc)
+
+        payload = jwt_handler.decode_token(token)
+
+        assert "iat" in payload
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+
+        # JWT iat has second precision, so we need to account for truncation
+        # Check that iat is within a reasonable range (within 1 second)
+        assert abs((iat - before_create).total_seconds()) < 1
+        assert abs((after_create - iat).total_seconds()) < 2
