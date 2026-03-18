@@ -12,7 +12,7 @@ class Task(Base):
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     task_type = Column(String(50))
-    status = Column(String(50))
+    status = Column(String(50), index=True)
     progress = Column(Integer)
     result = Column(JSON)
     error_message = Column(Text)

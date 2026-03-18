@@ -11,9 +11,9 @@ class Project(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String(255), nullable=False)
-    status = Column(String(50))
+    status = Column(String(50), index=True)
     current_step = Column(String(50))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     topic_source = Column(String(50))
     topic_title = Column(Text)

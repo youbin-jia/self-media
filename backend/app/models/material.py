@@ -16,7 +16,7 @@ class Material(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Material information
-    material_type = Column(String(20))  # "video", "image", "audio"
+    material_type = Column(String(20), index=True)  # "video", "image", "audio"
     type = Column(String(20))  # Legacy field, kept for backward compatibility
     source = Column(String(50), nullable=False)  # "pexels", "local", "ai_generated"
     source_id = Column(String(100))  # External material ID
