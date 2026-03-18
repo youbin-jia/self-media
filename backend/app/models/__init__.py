@@ -6,6 +6,7 @@ from app.models.task import Task
 from app.models.quality_report import QualityReport
 from app.models.batch import BatchJob, BatchStatus, BatchPriority
 from app.models.user import User, UserRole
+from app.models.plugin import Plugin, PluginConfiguration
 
 __all__ = [
     "Project",
@@ -18,4 +19,6 @@ __all__ = [
     "BatchPriority",
     "User",
     "UserRole",
+    "Plugin",
+    "PluginConfiguration",
 ]
