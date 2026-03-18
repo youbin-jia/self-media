@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import uuid
 
 # Import all models first to register them with Base
-from app.models import user, project, script, material, task, batch, quality_report, plugin  # noqa: F401
+from app.models import user, project, script, material, task, batch, quality_report, plugin, webhook  # noqa: F401
 
 from app.database import Base, get_db
 

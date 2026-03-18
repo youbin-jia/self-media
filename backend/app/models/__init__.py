@@ -7,6 +7,7 @@ from app.models.quality_report import QualityReport
 from app.models.batch import BatchJob, BatchStatus, BatchPriority
 from app.models.user import User, UserRole
 from app.models.plugin import Plugin, PluginConfiguration
+from app.models.webhook import Webhook, WebhookDelivery
 
 __all__ = [
     "Project",
@@ -21,4 +22,6 @@ __all__ = [
     "UserRole",
     "Plugin",
     "PluginConfiguration",
+    "Webhook",
+    "WebhookDelivery",
 ]
