@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # Storage
     DATA_DIR: str = "./data"
 
+    # Cache TTL Configuration (in seconds)
+    CACHE_TTL_USER: int = 3600          # 1 hour
+    CACHE_TTL_PROJECT: int = 1800       # 30 minutes
+    CACHE_TTL_PROJECT_LIST: int = 600   # 10 minutes
+    CACHE_TTL_HOT_TOPICS: int = 300     # 5 minutes
+    CACHE_TTL_SEARCH: int = 3600        # 1 hour
+    CACHE_TTL_DASHBOARD: int = 900      # 15 minutes
+
     @field_validator("JWT_SECRET_KEY")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:
