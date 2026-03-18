@@ -31,7 +31,7 @@ app.add_middleware(
 )
 
 # Include routers
-from app.api import topics, scripts, projects, materials, video, llm, quality, ai_generation, batch, analytics, auth, users, plugins, webhooks, recommendations
+from app.api import topics, scripts, projects, materials, video, llm, quality, ai_generation, batch, analytics, auth, users, plugins, webhooks, recommendations, mobile
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(topics.router, prefix="/api/topics", tags=["topics"])
@@ -47,6 +47,7 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(plugins.router, prefix="/api/plugins", tags=["plugins"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
+app.include_router(mobile.router)
 
 # TODO: Include routers when ready
 # from app.api import tasks

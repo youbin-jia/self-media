@@ -8,10 +8,14 @@ class TestPluginDiscovery:
 
     def test_discover_plugins_in_directory(self, test_db):
         """测试发现目录中的插件"""
+        import os
         from app.services.plugins.discovery import PluginDiscovery
 
-        # 使用项目根目录的 plugins 目录
-        discovery = PluginDiscovery("plugins")
+        # Get project root (one level up from backend/)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        plugins_dir = os.path.join(project_root, "plugins")
+
+        discovery = PluginDiscovery(plugins_dir)
         plugins = discovery.discover_plugins()
 
         # 应该至少发现 example_source 插件
