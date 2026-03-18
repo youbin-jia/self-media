@@ -19,6 +19,10 @@ from app.tasks.video_tasks import synthesize_video_task
 
 logger = logging.getLogger(__name__)
 
+# Task priority constants
+BATCH_PROCESSING_PRIORITY = 8  # High priority - batch processing
+BATCH_MONITOR_PRIORITY = 4     # Medium priority - monitoring
+
 
 @celery_app.task(bind=True)
 def process_batch_task(self, batch_id: str) -> Dict[str, Any]:

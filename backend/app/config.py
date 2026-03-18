@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     CACHE_TTL_SEARCH: int = 3600        # 1 hour
     CACHE_TTL_DASHBOARD: int = 900      # 15 minutes
 
+    # Celery Configuration
+    CELERY_WORKER_CONCURRENCY: int = 4
+    CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1
+    CELERY_TASK_ACKS_LATE: bool = True
+    CELERY_TASK_REJECT_ON_WORKER_LOST: bool = True
+    CELERY_TASK_RESULT_CACHE_TTL: int = 3600  # 1 hour default cache TTL for tasks
+
     @field_validator("JWT_SECRET_KEY")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:

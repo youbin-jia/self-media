@@ -13,6 +13,9 @@ from app.services.video_synthesizer import VideoSynthesizer
 
 logger = logging.getLogger(__name__)
 
+# Task priority constants
+VIDEO_SYNTHESIS_PRIORITY = 9  # Highest priority - video synthesis
+
 
 @celery_app.task(bind=True)
 def synthesize_video_task(
