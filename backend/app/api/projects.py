@@ -1,14 +1,26 @@
 # backend/app/api/projects.py
 """Project API Routes"""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
+from app.middleware.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter()
+
+
+class BatchDeleteRequest(BaseModel):
+    project_ids: List[str]
+
+
+class BatchUpdateStatusRequest(BaseModel):
+    project_ids: List[str]
+    status: str
 
 
 @router.get("/", response_model=List[ProjectResponse])
@@ -238,3 +250,54 @@ async def delete_project(
     db.commit()
 
     return {"success": True, "message": "Project deleted successfully"}
+
+
+@router.post("/batch/delete")
+async def batch_delete_projects(
+    request: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """批量删除项目"""
+    if not request.project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project_ids cannot be empty"
+        )
+
+    # 只删除用户自己的项目
+    deleted = db.query(Project).filter(
+        Project.id.in_(request.project_ids),
+        Project.owner_id == current_user.id
+    ).delete(synchronize_session=False)
+
+    db.commit()
+
+    return {"deleted_count": deleted}
+
+
+@router.post("/batch/update-status")
+async def batch_update_project_status(
+    request: BatchUpdateStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """批量更新项目状态"""
+    if not request.project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project_ids cannot be empty"
+        )
+
+    # 只更新用户自己的项目
+    projects = db.query(Project).filter(
+        Project.id.in_(request.project_ids),
+        Project.owner_id == current_user.id
+    ).all()
+
+    for project in projects:
+        project.status = request.status
+
+    db.commit()
+
+    return {"updated_count": len(projects)}
