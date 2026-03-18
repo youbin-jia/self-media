@@ -1154,3 +1154,374 @@ class TestCheckProjectAccess:
         assert result is True
         result = check_project_access(project.id, viewer_user, self.db)
         assert result is True
+
+
+class TestAuthAPIEndpoints:
+    """Test cases for authentication API endpoints"""
+
+    def test_register_user_success(self, client):
+        """Test successful user registration"""
+        response = client.post("/api/auth/register", json={
+            "username": "newuser",
+            "email": "newuser@example.com",
+            "password": "SecurePassword123!"
+        })
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["username"] == "newuser"
+        assert data["email"] == "newuser@example.com"
+        assert data["role"] == "viewer"
+        assert "id" in data
+        assert "hashed_password" not in data
+
+    def test_register_user_duplicate_username(self, client):
+        """Test registration with duplicate username"""
+        # Create first user
+        client.post("/api/auth/register", json={
+            "username": "duplicate",
+            "email": "first@example.com",
+            "password": "Password123!"
+        })
+
+        # Try to create second user with same username
+        response = client.post("/api/auth/register", json={
+            "username": "duplicate",
+            "email": "second@example.com",
+            "password": "Password456!"
+        })
+
+        assert response.status_code == 400
+        assert "already registered" in response.json()["detail"].lower()
+
+    def test_register_user_duplicate_email(self, client):
+        """Test registration with duplicate email"""
+        # Create first user
+        client.post("/api/auth/register", json={
+            "username": "user1",
+            "email": "duplicate@example.com",
+            "password": "Password123!"
+        })
+
+        # Try to create second user with same email
+        response = client.post("/api/auth/register", json={
+            "username": "user2",
+            "email": "duplicate@example.com",
+            "password": "Password456!"
+        })
+
+        assert response.status_code == 400
+        assert "already registered" in response.json()["detail"].lower()
+
+    def test_login_success(self, client):
+        """Test successful login"""
+        # Register user first
+        client.post("/api/auth/register", json={
+            "username": "loginuser",
+            "email": "login@example.com",
+            "password": "Password123!"
+        })
+
+        # Login
+        response = client.post("/api/auth/login", json={
+            "username": "loginuser",
+            "password": "Password123!"
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_login_wrong_password(self, client):
+        """Test login with wrong password"""
+        # Register user
+        client.post("/api/auth/register", json={
+            "username": "wrongpassuser",
+            "email": "wrongpass@example.com",
+            "password": "Password123!"
+        })
+
+        # Login with wrong password
+        response = client.post("/api/auth/login", json={
+            "username": "wrongpassuser",
+            "password": "WrongPassword!"
+        })
+
+        assert response.status_code == 401
+        assert "incorrect" in response.json()["detail"].lower()
+
+    def test_login_nonexistent_user(self, client):
+        """Test login with non-existent user"""
+        response = client.post("/api/auth/login", json={
+            "username": "nonexistent",
+            "password": "Password123!"
+        })
+
+        assert response.status_code == 401
+
+    def test_get_current_user(self, client):
+        """Test getting current user info"""
+        # Register and login
+        client.post("/api/auth/register", json={
+            "username": "currentuser",
+            "email": "current@example.com",
+            "password": "Password123!"
+        })
+
+        login_response = client.post("/api/auth/login", json={
+            "username": "currentuser",
+            "password": "Password123!"
+        })
+        token = login_response.json()["access_token"]
+
+        # Get current user
+        response = client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "currentuser"
+        assert data["email"] == "current@example.com"
+        assert data["role"] == "viewer"
+
+    def test_get_current_user_no_token(self, client):
+        """Test getting current user without token"""
+        response = client.get("/api/auth/me")
+        assert response.status_code == 401
+
+    def test_refresh_token(self, client):
+        """Test token refresh"""
+        # Register and login
+        client.post("/api/auth/register", json={
+            "username": "refreshuser",
+            "email": "refresh@example.com",
+            "password": "Password123!"
+        })
+
+        login_response = client.post("/api/auth/login", json={
+            "username": "refreshuser",
+            "password": "Password123!"
+        })
+        old_token = login_response.json()["access_token"]
+
+        # Refresh token
+        response = client.post(
+            "/api/auth/refresh",
+            headers={"Authorization": f"Bearer {old_token}"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        # Token should be valid and contain same user info
+        # Note: Tokens may be identical if generated within same second with same payload
+
+    def test_logout_success(self, client):
+        """Test logout endpoint"""
+        # Register and login
+        client.post("/api/auth/register", json={
+            "username": "logoutuser",
+            "email": "logout@example.com",
+            "password": "Password123!"
+        })
+
+        login_response = client.post("/api/auth/login", json={
+            "username": "logoutuser",
+            "password": "Password123!"
+        })
+        token = login_response.json()["access_token"]
+
+        # Logout
+        response = client.post(
+            "/api/auth/logout",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        assert "success" in response.json()["message"].lower()
+
+
+class TestUserManagementAPI:
+    """Test cases for user management API endpoints"""
+
+    def test_list_users_as_admin(self, client, admin_token, test_db):
+        """Test listing users as admin"""
+        import uuid
+        # Create some users
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        unique = str(uuid.uuid4())[:8]
+        user1 = User(
+            username=f"user1_{unique}",
+            email=f"user1_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.EDITOR.value
+        )
+        user2 = User(
+            username=f"user2_{unique}",
+            email=f"user2_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.VIEWER.value
+        )
+        test_db.add_all([user1, user2])
+        test_db.commit()
+
+        response = client.get(
+            "/api/users",
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 2  # at least the created users
+
+    def test_list_users_as_viewer_forbidden(self, client, viewer_token):
+        """Test that viewer cannot list users"""
+        response = client.get(
+            "/api/users",
+            headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+        assert response.status_code == 403
+
+    def test_get_user_by_id_as_admin(self, client, admin_token, test_db):
+        """Test getting user by ID as admin"""
+        import uuid
+        # Create a user
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        unique = str(uuid.uuid4())[:8]
+        user = User(
+            username=f"getuser_{unique}",
+            email=f"getuser_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.EDITOR.value
+        )
+        test_db.add(user)
+        test_db.commit()
+
+        response = client.get(
+            f"/api/users/{user.id}",
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == user.username
+        assert data["email"] == user.email
+
+    def test_get_user_by_id_as_viewer(self, client, viewer_token, viewer_user):
+        """Test that viewer can get their own user info"""
+        response = client.get(
+            f"/api/users/{viewer_user.id}",
+            headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["username"] == viewer_user.username
+
+    def test_update_user_info(self, client, viewer_token, viewer_user):
+        """Test updating user info"""
+        response = client.put(
+            f"/api/users/{viewer_user.id}",
+            headers={"Authorization": f"Bearer {viewer_token}"},
+            json={
+                "email": "updated@example.com"
+            }
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email"] == "updated@example.com"
+
+    def test_update_user_role_as_admin(self, client, admin_token, test_db):
+        """Test updating user role as admin"""
+        import uuid
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        unique = str(uuid.uuid4())[:8]
+        user = User(
+            username=f"roleuser_{unique}",
+            email=f"roleuser_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.VIEWER.value
+        )
+        test_db.add(user)
+        test_db.commit()
+
+        response = client.put(
+            f"/api/users/{user.id}/role",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"role": "editor"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["role"] == "editor"
+
+    def test_update_user_role_as_viewer_forbidden(self, client, viewer_token, viewer_user):
+        """Test that viewer cannot update user roles"""
+        response = client.put(
+            f"/api/users/{viewer_user.id}/role",
+            headers={"Authorization": f"Bearer {viewer_token}"},
+            json={"role": "admin"}
+        )
+
+        assert response.status_code == 403
+
+    def test_delete_user_as_admin(self, client, admin_token, test_db):
+        """Test deleting user as admin"""
+        import uuid
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        unique = str(uuid.uuid4())[:8]
+        user = User(
+            username=f"deleteuser_{unique}",
+            email=f"deleteuser_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.VIEWER.value
+        )
+        test_db.add(user)
+        test_db.commit()
+        user_id = user.id
+
+        response = client.delete(
+            f"/api/users/{user_id}",
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+
+        assert response.status_code == 200
+
+        # Verify user is deleted
+        deleted = test_db.query(User).filter(User.id == user_id).first()
+        assert deleted is None
+
+    def test_delete_user_as_viewer_forbidden(self, client, viewer_token, test_db):
+        """Test that viewer cannot delete users"""
+        import uuid
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        unique = str(uuid.uuid4())[:8]
+        user = User(
+            username=f"deleteuser2_{unique}",
+            email=f"deleteuser2_{unique}@example.com",
+            hashed_password=pwd_context.hash("pass"),
+            role=UserRole.VIEWER.value
+        )
+        test_db.add(user)
+        test_db.commit()
+
+        response = client.delete(
+            f"/api/users/{user.id}",
+            headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+        assert response.status_code == 403

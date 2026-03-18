@@ -5,15 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-
 # Create FastAPI app
 app = FastAPI(
     title="Video Automation API",
     description="Backend API for Video Automation System",
     version="0.1.0",
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Create database tables on startup"""
+    Base.metadata.create_all(bind=engine)
 
 # Configure CORS
 app.add_middleware(
@@ -28,7 +31,9 @@ app.add_middleware(
 )
 
 # Include routers
-from app.api import topics, scripts, projects, materials, video, llm, quality, ai_generation, batch, analytics
+from app.api import topics, scripts, projects, materials, video, llm, quality, ai_generation, batch, analytics, auth, users
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(topics.router, prefix="/api/topics", tags=["topics"])
 app.include_router(scripts.router, prefix="/api/scripts", tags=["scripts"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
