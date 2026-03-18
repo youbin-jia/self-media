@@ -66,7 +66,15 @@ def cache_result(key_pattern: str, ttl: int = 1800):
         async def wrapper(*args, **kwargs):
             try:
                 # Generate cache key from pattern
-                cache_key = key_pattern.format(**kwargs)
+                try:
+                    cache_key = key_pattern.format(**kwargs)
+                except KeyError as e:
+                    logger.warning(
+                        f"Missing parameter {e} for key pattern '{key_pattern}'. "
+                        f"Available kwargs: {list(kwargs.keys())}"
+                    )
+                    # Fall back to executing function without caching
+                    return await func(*args, **kwargs)
 
                 # Try to get from cache
                 client = get_redis_client()

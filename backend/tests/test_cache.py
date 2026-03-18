@@ -152,6 +152,26 @@ class TestCacheResultDecorator:
             call_args = mock_client.setex.call_args
             assert call_args[0][0] == "user:u1:project:p1"
 
+    @pytest.mark.asyncio
+    async def test_cache_result_missing_parameter_falls_back_gracefully(self):
+        """Test that cache_result falls back gracefully when key pattern parameter is missing."""
+        with patch('app.services.cache.redis_cache.get_redis_client') as mock_get_client:
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+
+            @cache_result(key_pattern="project:{project_id}:user:{user_id}", ttl=60)
+            async def test_func(project_id: str):
+                # Note: user_id is not passed but required by key pattern
+                return {"project_id": project_id}
+
+            # Should execute function without caching when parameter is missing
+            result = await test_func(project_id="p1")
+            assert result == {"project_id": "p1"}
+
+            # Should not have attempted any cache operations
+            mock_client.get.assert_not_called()
+            mock_client.setex.assert_not_called()
+
 
 class TestInvalidateCacheDecorator:
     """Test invalidate_cache decorator."""
