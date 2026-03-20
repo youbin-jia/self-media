@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import VideoClip
+from moviepy import  VideoClip
 
 logger = logging.getLogger(__name__)
 

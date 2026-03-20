@@ -4,6 +4,7 @@
 
 - [环境要求](#环境要求)
 - [快速开始](#快速开始)
+- [启动服务](#启动服务)
 - [生产部署](#生产部署)
 - [Docker部署](#docker部署)
 - [配置说明](#配置说明)
@@ -15,7 +16,7 @@
 
 | 组件 | 版本要求 | 用途 |
 |------|---------|------|
-| Python | 3.10+ | 后端运行环境 |
+| Python | 3.11+ | 后端运行环境 |
 | Redis | 6.0+ | 缓存 + 消息队列 |
 | FFmpeg | 4.0+ | 视频处理 |
 | Node.js | 18+ | 前端构建（可选） |
@@ -48,13 +49,7 @@ source venv/bin/activate  # Linux/macOS
 .\venv\Scripts\activate   # Windows
 ```
 
-### 3. 安装依赖
-
-```bash
-pip install -r backend/requirements.txt
-```
-
-### 4. 安装系统依赖
+### 3. 安装系统依赖
 
 **macOS:**
 ```bash
@@ -76,25 +71,33 @@ choco install ffmpeg redis
 # 或手动下载安装
 ```
 
+### 4. 安装Python依赖
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+> **注意**: 项目使用 MoviePy 2.x，部分 API 与 1.x 不兼容。
+
 ### 5. 配置环境变量
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-编辑 `.env` 文件：
+编辑 `backend/.env` 文件，配置必要的密钥：
 
 ```env
 # 环境
 ENVIRONMENT=development
 
-# 数据库
+# 数据库（开发环境使用SQLite）
 DATABASE_URL=sqlite:///./data/video_automation.db
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
-# JWT密钥（生产环境必须修改）
+# JWT密钥（生产环境必须修改！）
 JWT_SECRET_KEY=your-super-secret-jwt-key-change-me
 SECRET_KEY=your-app-secret-key-change-me
 
@@ -106,47 +109,76 @@ AZURE_SPEECH_REGION=eastasia
 
 # LLM配置
 DEFAULT_LLM_PROVIDER=claude
-LLM_FALLBACK_ENABLED=true
 
 # TTS配置
 DEFAULT_TTS_PROVIDER=azure
 ```
 
-### 6. 初始化数据库
+### 6. 验证安装
 
 ```bash
+# 测试导入
 cd backend
-python -c "from app.database import Base, engine; Base.metadata.create_all(bind=engine)"
+python -c "from app.main import app; print('OK')"
 ```
 
-### 7. 启动服务
+## 启动服务
 
-**启动后端API服务：**
+需要启动三个服务：后端API、Celery Worker、前端。
+
+### 方式一：分别启动（推荐开发环境）
+
+**终端1 - 后端API服务：**
 ```bash
 cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**启动Celery Worker（新终端）：**
+**终端2 - Celery Worker：**
 ```bash
 cd backend
 celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low
 ```
 
-**启动Celery Beat（定时任务，可选）：**
+**终端3 - 前端（可选）：**
 ```bash
-cd backend
-celery -A app.tasks.celery_app beat --loglevel=info
+cd frontend
+npm install  # 首次需要安装依赖
+npm run dev
 ```
 
-### 8. 验证安装
+### 方式二：后台启动
+
+```bash
+# 启动后端API
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+
+# 启动Celery Worker
+celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low &
+
+# 启动前端
+cd ../frontend
+npm run dev &
+```
+
+### 服务地址
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端 | http://localhost:3000 | React 应用 |
+| API | http://localhost:8000 | FastAPI 后端 |
+| API文档 | http://localhost:8000/docs | Swagger UI |
+| 健康检查 | http://localhost:8000/health | 服务状态 |
+
+### 验证服务
 
 ```bash
 # 检查API健康状态
 curl http://localhost:8000/health
 
-# 查看API文档
-open http://localhost:8000/docs
+# 预期输出
+{"status":"healthy","database":"connected","redis":"not_checked"}
 ```
 
 ## 生产部署
@@ -157,7 +189,7 @@ open http://localhost:8000/docs
 DATABASE_URL=postgresql://user:password@localhost:5432/video_automation
 ```
 
-安装 psycopg2：
+安装依赖：
 ```bash
 pip install psycopg2-binary
 ```
@@ -167,6 +199,7 @@ pip install psycopg2-binary
 ```bash
 pip install gunicorn
 
+cd backend
 gunicorn app.main:app \
     --workers 4 \
     --worker-class uvicorn.workers.UvicornWorker \
@@ -293,121 +326,42 @@ REDIS_URL=redis://:your-redis-password@localhost:6379/0
 
 ## Docker部署
 
-### Dockerfile
-
-创建 `Dockerfile`：
-
-```dockerfile
-FROM python:3.10-slim
-
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    redis-tools \
-    && rm -rf /var/lib/apt/lists/*
-
-# 设置工作目录
-WORKDIR /app
-
-# 安装Python依赖
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制应用代码
-COPY backend/ ./backend/
-COPY plugins/ ./plugins/
-
-# 创建数据目录
-RUN mkdir -p /app/data
-
-# 暴露端口
-EXPOSE 8000
-
-# 启动命令
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - ENVIRONMENT=production
-      - DATABASE_URL=postgresql://postgres:password@db:5432/video_automation
-      - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    volumes:
-      - ./data:/app/data
-    depends_on:
-      - db
-      - redis
-
-  worker:
-    build: .
-    command: celery -A backend.app.tasks.celery_app worker --loglevel=info -Q high,medium,low
-    environment:
-      - ENVIRONMENT=production
-      - DATABASE_URL=postgresql://postgres:password@db:5432/video_automation
-      - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    volumes:
-      - ./data:/app/data
-    depends_on:
-      - db
-      - redis
-
-  beat:
-    build: .
-    command: celery -A backend.app.tasks.celery_app beat --loglevel=info
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - redis
-
-  db:
-    image: postgres:15
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=video_automation
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-
-volumes:
-  postgres_data:
-  redis_data:
-```
+项目已包含 `Dockerfile` 和 `docker-compose.yml`，可直接使用。
 
 ### 启动Docker服务
 
 ```bash
-# 构建并启动
+# 构建并启动所有服务
 docker-compose up -d
 
 # 查看日志
 docker-compose logs -f api
 
+# 查看所有服务状态
+docker-compose ps
+
 # 停止服务
 docker-compose down
+```
+
+### Docker服务说明
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| api | 8000 | FastAPI 后端 |
+| worker | - | Celery Worker |
+| beat | - | Celery Beat 定时任务 |
+| redis | 6379 | Redis 缓存 |
+| db | 5432 | PostgreSQL 数据库 |
+
+### Docker环境变量
+
+创建 `.env` 文件配置环境变量：
+
+```env
+JWT_SECRET_KEY=your-production-jwt-secret
+ANTHROPIC_API_KEY=your-anthropic-key
+OPENAI_API_KEY=your-openai-key
 ```
 
 ## 配置说明
@@ -432,23 +386,37 @@ docker-compose down
 | `DEFAULT_TTS_PROVIDER` | 否 | azure | 默认TTS提供商 |
 | `DATA_DIR` | 否 | ./data | 数据存储目录 |
 
-### 日志配置
+## 常见问题
+
+### Q: 模块导入错误 "No module named 'moviepy.editor'"
+
+MoviePy 2.x 改变了导入方式，使用以下方式导入：
 
 ```python
-# 添加到 app/main.py
-import logging
+# 旧版本 (1.x)
+from moviepy.editor import VideoFileClip
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/app.log'),
-        logging.StreamHandler()
-    ]
-)
+# 新版本 (2.x)
+from moviepy import VideoFileClip
 ```
 
-## 常见问题
+API 方法也有变化：
+- `clip.resize()` → `clip.resized()`
+- `clip.crop()` → `clip.cropped()`
+- `clip.set_start()` → `clip.with_start()`
+- `clip.fl_image()` → `clip.image_transform()`
+
+### Q: 模块导入错误 "No module named 'matplotlib'"
+
+安装缺失依赖：
+```bash
+pip install matplotlib email-validator
+```
+
+或重新安装完整依赖：
+```bash
+pip install -r backend/requirements.txt
+```
 
 ### Q: FFmpeg找不到
 
@@ -456,8 +424,11 @@ logging.basicConfig(
 # 检查FFmpeg是否安装
 ffmpeg -version
 
-# 添加到PATH（如果需要）
-export PATH=$PATH:/usr/local/bin/ffmpeg
+# macOS安装
+brew install ffmpeg
+
+# Ubuntu安装
+sudo apt install ffmpeg
 ```
 
 ### Q: Redis连接失败
@@ -465,25 +436,37 @@ export PATH=$PATH:/usr/local/bin/ffmpeg
 ```bash
 # 检查Redis状态
 redis-cli ping
+# 预期输出: PONG
 
-# 检查Redis配置
-redis-cli config get bind
+# macOS启动Redis
+brew services start redis
+
+# Ubuntu启动Redis
+sudo systemctl start redis
 ```
 
 ### Q: Celery任务不执行
 
 ```bash
 # 检查Worker状态
+cd backend
 celery -A app.tasks.celery_app inspect active
 
 # 检查队列状态
 celery -A app.tasks.celery_app inspect reserved
 ```
 
+### Q: 前端无法连接后端
+
+1. 确认后端服务正在运行：`curl http://localhost:8000/health`
+2. 检查 CORS 配置：后端默认允许 `localhost:3000` 和 `localhost:5173`
+3. 检查前端 API 配置是否正确
+
 ### Q: 数据库迁移
 
 ```bash
 # 使用Alembic进行迁移
+cd backend
 alembic revision --autogenerate -m "migration message"
 alembic upgrade head
 ```
@@ -498,4 +481,14 @@ celery -A app.tasks.celery_app worker --concurrency=2
 或在配置中设置：
 ```env
 CELERY_WORKER_CONCURRENCY=2
+```
+
+### Q: 端口被占用
+
+```bash
+# 查看端口占用
+lsof -i :8000
+
+# 终止进程
+kill -9 <PID>
 ```

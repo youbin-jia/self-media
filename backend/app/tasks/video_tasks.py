@@ -102,7 +102,7 @@ def synthesize_video_task(
 
             output_path = synthesizer.get_output_path(project_id, platform)
             # Load the base clip
-            from moviepy.editor import VideoFileClip
+            from moviepy import  VideoFileClip
             clip = VideoFileClip(base_clip)
             try:
                 synthesizer.export_for_platform(clip, platform, output_path)

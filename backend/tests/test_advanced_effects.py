@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
-from moviepy.editor import VideoClip
+from moviepy import  VideoClip
 
 from app.services.effects.data_visualization import DataVisualizationEffect
 from app.services.effects.dynamic_subtitle import DynamicSubtitleEffect

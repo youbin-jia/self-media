@@ -13,7 +13,7 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-from moviepy.editor import VideoClip, ImageClip
+from moviepy import  VideoClip, ImageClip
 
 logger = logging.getLogger(__name__)
 

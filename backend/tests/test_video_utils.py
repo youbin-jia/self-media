@@ -363,7 +363,7 @@ class TestVideoProcessorRealClips:
 
     def test_fade_transition_real_clip(self):
         """Test fade transition with real VideoClip objects"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         # Create two simple test clips
         def make_frame1(t):
@@ -389,7 +389,7 @@ class TestVideoProcessorRealClips:
 
     def test_crossfade_transition_real_clip(self):
         """Test crossfade transition with real VideoClip objects"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         # Create two simple test clips
         def make_frame1(t):
@@ -420,7 +420,7 @@ class TestVideoProcessorRealClips:
 
     def test_wipe_transition_real_clip(self):
         """Test wipe transition with real VideoClip objects"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         # Create two simple test clips with different colors
         def make_frame1(t):
@@ -450,7 +450,7 @@ class TestVideoProcessorRealClips:
 
     def test_no_transition_real_clip(self):
         """Test no transition with real VideoClip objects"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         def make_frame1(t):
             return np.ones((1080, 1920, 3), dtype=np.uint8) * 100
@@ -479,7 +479,7 @@ class TestVideoProcessorIntegration:
 
     def test_color_grading_warm_actual(self):
         """测试实际暖色调调色执行"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         # Create a test frame
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
@@ -500,7 +500,7 @@ class TestVideoProcessorIntegration:
 
     def test_color_grading_cool_actual(self):
         """测试实际冷色调调色执行"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -518,7 +518,7 @@ class TestVideoProcessorIntegration:
 
     def test_color_grading_cinematic_actual(self):
         """测试实际电影感调色执行"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -536,7 +536,7 @@ class TestVideoProcessorIntegration:
 
     def test_color_grading_default_actual(self):
         """测试实际无预设调色执行"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -554,7 +554,7 @@ class TestVideoProcessorIntegration:
 
     def test_ken_burns_actual_execution(self):
         """测试实际Ken Burns效果执行"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -578,7 +578,7 @@ class TestVideoProcessorIntegration:
 
     def test_ken_burns_direction_left(self):
         """测试Ken Burns效果左方向"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -601,7 +601,7 @@ class TestVideoProcessorIntegration:
 
     def test_ken_burns_direction_right(self):
         """测试Ken Burns效果右方向"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         test_frame = np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
 
@@ -641,7 +641,7 @@ class TestVideoSynthesizerEffectsIntegration:
 
     def test_composite_effects_empty_list(self, synthesizer):
         """Test _composite_effects with empty effect list"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         def make_frame(t):
             return np.ones((1080, 1920, 3), dtype=np.uint8) * 100
@@ -658,7 +658,7 @@ class TestVideoSynthesizerEffectsIntegration:
 
     def test_composite_effects_with_effect_clips(self, synthesizer):
         """Test _composite_effects with effect clips"""
-        from moviepy.editor import VideoClip
+        from moviepy import  VideoClip
 
         # Create base clip
         def make_base_frame(t):
@@ -780,7 +780,7 @@ class TestVideoSynthesizerEffectsIntegration:
     async def test_synthesize_video_with_enable_effects_false(self, synthesizer, tmp_path):
         """Test synthesize_video with enable_effects=False (backward compatibility)"""
         # Create a test video file - use ImageClip instead of VideoClip to avoid Ken Burns issues
-        from moviepy.editor import ImageClip
+        from moviepy import  ImageClip
 
         # Create a simple image-based video
         test_image = np.ones((1080, 1920, 3), dtype=np.uint8) * 100
@@ -824,7 +824,7 @@ class TestVideoSynthesizerEffectsIntegration:
     @pytest.mark.asyncio
     async def test_synthesize_video_with_pre_generated_effects(self, synthesizer, tmp_path):
         """Test synthesize_video with pre-generated effect clips"""
-        from moviepy.editor import ImageClip, VideoClip
+        from moviepy import  ImageClip, VideoClip
 
         # Create a test video file using ImageClip
         test_image = np.ones((1080, 1920, 3), dtype=np.uint8) * 100

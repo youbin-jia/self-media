@@ -644,7 +644,7 @@ class MaterialCollector:
 
     def _create_solid_color_materials(self, project_id: int, count: int) -> List[Material]:
         """创建纯色素材"""
-        from moviepy.editor import ColorClip
+        from moviepy import  ColorClip
 
         materials = []
         colors = [

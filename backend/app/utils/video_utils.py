@@ -2,10 +2,9 @@
 """Video Processing Utilities with Transitions and Effects"""
 import logging
 from typing import List, Dict, Any, Optional
-from moviepy.editor import VideoFileClip, CompositeVideoClip, ColorClip
-from moviepy.video.fx.fadein import fadein
-from moviepy.video.fx.fadeout import fadeout
-from moviepy.video.fx.resize import resize
+# MoviePy 2.x imports
+from moviepy import VideoFileClip, CompositeVideoClip, ColorClip
+from moviepy.video.fx import FadeIn, FadeOut, Resize
 import numpy as np
 from PIL import Image
 
@@ -50,16 +49,17 @@ class VideoProcessor:
 
         try:
             if transition_type == "fade":
-                # 淡入淡出
-                clip1_faded = fadeout(clip1, duration)
-                clip2_faded = fadein(clip2, duration)
-                return CompositeVideoClip([clip1_faded, clip2_faded.set_start(clip1.duration - duration)])
+                # 淡入淡出 - MoviePy 2.x uses with_effects
+                clip1_faded = clip1.with_effects([FadeOut(duration)])
+                clip2_faded = clip2.with_effects([FadeIn(duration)])
+                return CompositeVideoClip([clip1_faded, clip2_faded.with_start(clip1.duration - duration)])
 
             elif transition_type == "crossfade":
-                # 交叉淡入淡出 - use MoviePy's crossfade methods
-                clip1_crossfaded = clip1.crossfadeout(duration)
-                clip2_crossfaded = clip2.crossfadein(duration)
-                return CompositeVideoClip([clip1_crossfaded, clip2_crossfaded.set_start(clip1.duration - duration)])
+                # 交叉淡入淡出 - use MoviePy 2.x CrossFadeIn/CrossFadeOut
+                from moviepy.video.fx import CrossFadeIn, CrossFadeOut
+                clip1_crossfaded = clip1.with_effects([CrossFadeOut(duration)])
+                clip2_crossfaded = clip2.with_effects([CrossFadeIn(duration)])
+                return CompositeVideoClip([clip1_crossfaded, clip2_crossfaded.with_start(clip1.duration - duration)])
 
             elif transition_type == "wipe":
                 # 擦除转场 - implement proper wipe effect
@@ -75,7 +75,7 @@ class VideoProcessor:
                     return frame
 
                 # Create a custom video clip with the wipe effect
-                from moviepy.video.VideoClip import VideoClip
+                from moviepy import VideoClip
                 wipe_duration = duration
                 wipe_clip = VideoClip(
                     lambda t: make_wipe_frame(
@@ -90,12 +90,12 @@ class VideoProcessor:
 
             else:
                 # 无转场 - simple concatenation
-                return CompositeVideoClip([clip1, clip2.set_start(clip1.duration)])
+                return CompositeVideoClip([clip1, clip2.with_start(clip1.duration)])
 
         except Exception as e:
             logger.error(f"Failed to create {transition_type} transition: {e}")
             # Fallback to simple concatenation
-            return CompositeVideoClip([clip1, clip2.set_start(clip1.duration)])
+            return CompositeVideoClip([clip1, clip2.with_start(clip1.duration)])
 
     @staticmethod
     def add_ken_burns_effect(
@@ -183,7 +183,8 @@ class VideoProcessor:
                 # Return original frame on error
                 return clip.get_frame(t)
 
-        return clip.fl(lambda gf, t: make_frame(t), apply_to=[])
+        # MoviePy 2.x uses transform instead of fl
+        return clip.transform(lambda gf, t: make_frame(t))
 
     @staticmethod
     def add_color_grading(
@@ -231,7 +232,8 @@ class VideoProcessor:
                 logger.error(f"Error applying color grading preset '{preset}': {e}")
                 return frame
 
-        return clip.fl_image(apply_color_grading)
+        # MoviePy 2.x uses image_transform instead of fl_image
+        return clip.image_transform(apply_color_grading)
 
     @staticmethod
     def _adapt_aspect_ratio(
@@ -253,14 +255,14 @@ class VideoProcessor:
 
         if abs(current_ratio - target_ratio) < 0.01:
             # 宽高比基本相同，直接缩放
-            return clip.resize((target_width, target_height))
+            return clip.resized((target_width, target_height))
 
         # 需要裁剪
         if current_ratio > target_ratio:
             # 视频更宽，需要裁剪两侧
             new_width = int(clip.h * target_ratio)
             x_center = (clip.w - new_width) // 2
-            clip = clip.crop(
+            clip = clip.cropped(
                 x1=x_center,
                 width=new_width,
                 y1=0,
@@ -270,14 +272,14 @@ class VideoProcessor:
             # 视频更高，需要裁剪上下
             new_height = int(clip.w / target_ratio)
             y_center = (clip.h - new_height) // 2
-            clip = clip.crop(
+            clip = clip.cropped(
                 x1=0,
                 width=clip.w,
                 y1=y_center,
                 height=new_height
             )
 
-        return clip.resize((target_width, target_height))
+        return clip.resized((target_width, target_height))
 
     @staticmethod
     def add_text_overlay(
@@ -301,7 +303,7 @@ class VideoProcessor:
             添加文字后的视频
         """
         try:
-            from moviepy.video.VideoClip import TextClip
+            from moviepy import TextClip
 
             # Validate parameters
             if not text:
@@ -313,12 +315,12 @@ class VideoProcessor:
 
             txt = TextClip(
                 text,
-                fontsize=fontsize,
+                font_size=fontsize,
                 color=color,
                 font="Arial-Unicode-MS"
             )
 
-            txt = txt.set_position(position).set_duration(duration or clip.duration)
+            txt = txt.with_position(position).with_duration(duration or clip.duration)
             return CompositeVideoClip([clip, txt])
 
         except Exception as e:

@@ -4,7 +4,8 @@ import os
 import logging
 from typing import List, Dict, Any, Optional, Callable, Union
 from pathlib import Path
-from moviepy.editor import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip, VideoClip
+# MoviePy 2.x imports
+from moviepy import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip, VideoClip
 
 from app.config import settings
 from app.utils.video_utils import VideoProcessor
@@ -227,7 +228,7 @@ class VideoSynthesizer:
             return {"exists": False}
 
         try:
-            from moviepy.editor import VideoFileClip
+            from moviepy import VideoFileClip
 
             clip = VideoFileClip(video_path)
             info = {
