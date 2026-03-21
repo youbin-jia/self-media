@@ -1,23 +1,23 @@
-# 自媒体视频自动化平台 - Dockerfile
-FROM python:3.11-slim
+# 自媒体视频自动化平台 - Dockerfile (Miniconda)
+FROM continuumio/miniconda3:latest
 
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/backend
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libsndfile1 \
-    && rm -rf /var/lib/apt/lists/*
-
 # 设置工作目录
 WORKDIR /app
 
-# 安装Python依赖
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# 复制 conda 环境配置文件
+COPY environment.yml ./environment.yml
+
+# 创建 conda 环境
+RUN conda env create -f environment.yml && \
+    conda clean -afy
+
+# 激活 conda 环境
+SHELL ["conda", "run", "-n", "self-media", "/bin/bash", "-c"]
 
 # 复制应用代码
 COPY backend/ ./backend/
@@ -35,4 +35,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # 启动命令
 WORKDIR /app/backend
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["conda", "run", "-n", "self-media", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

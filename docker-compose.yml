@@ -30,7 +30,8 @@ services:
   worker:
     build: .
     container_name: self-media-worker
-    command: sh -c "cd /app/backend && celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low"
+    command: ["conda", "run", "-n", "self-media", "celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "-Q", "high,medium,low"]
+    working_dir: /app/backend
     environment:
       - ENVIRONMENT=development
       - DATABASE_URL=sqlite:///./data/video_automation.db
@@ -51,7 +52,8 @@ services:
   beat:
     build: .
     container_name: self-media-beat
-    command: sh -c "cd /app/backend && celery -A app.tasks.celery_app beat --loglevel=info"
+    command: ["conda", "run", "-n", "self-media", "celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+    working_dir: /app/backend
     environment:
       - REDIS_URL=redis://redis:6379/0
     depends_on:

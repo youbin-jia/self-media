@@ -11,8 +11,12 @@ This is a self-media video automation platform (自媒体视频自动化平台) 
 ### Backend
 
 ```bash
-# Install dependencies
-pip install -r backend/requirements.txt
+# Create and activate conda environment
+conda env create -f environment.yml
+conda activate self-media
+
+# Update environment (after dependency changes)
+conda env update -f environment.yml --prune
 
 # Run development server
 cd backend && uvicorn app.main:app --reload
