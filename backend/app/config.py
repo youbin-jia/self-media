@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # API Keys
     ANTHROPIC_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
+    OPENAI_BASE_URL: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4-turbo"
+    KIMI_API_KEY: Optional[str] = None
+    KIMI_BASE_URL: str = "https://api.moonshot.cn/v1"
+    KIMI_MODEL: str = "moonshot-v1-8k"
     PEXELS_API_KEY: Optional[str] = None
 
     # Pixabay

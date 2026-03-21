@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Table, Button, Tag, Space, message, Card, Typography, Tooltip, Popconfirm, Grid, Row, Col, Statistic } from 'antd'
 import { PlusOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import { getProjects, deleteProject } from '../services/api'
+import AnimatedNumber from '../components/AnimatedNumber'
 
 const { Text, Title } = Typography
 const { useBreakpoint } = Grid
@@ -10,11 +11,20 @@ const { useBreakpoint } = Grid
 function Projects() {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(false)
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth : 1440
+  )
   const navigate = useNavigate()
   const screens = useBreakpoint()
 
   useEffect(() => {
     loadProjects()
+  }, [])
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   const loadProjects = async () => {
@@ -60,7 +70,8 @@ function Projects() {
   const processingCount = projects.filter((item) => item.status === 'processing').length
   const completedCount = projects.filter((item) => item.status === 'completed').length
   const latestProject = projects[0]
-  const showSidebar = screens.xl
+  // Use sidebar only on ultra-wide screens to avoid visual crowding.
+  const showSidebar = screens.xxl && viewportWidth >= 1900
 
   const columns = [
     {
@@ -119,9 +130,14 @@ function Projects() {
   ]
 
   return (
-    <Row gutter={showSidebar ? 16 : 0}>
-      <Col xs={24} xl={18}>
-        <Card bordered={false} style={{ width: '100%' }} bodyStyle={{ padding: screens.md ? 20 : 12 }}>
+    <Row gutter={showSidebar ? 24 : 0} className="projects-layout">
+      <Col xs={24} xxl={17}>
+        <Card
+          className="glass-card hover-tilt"
+          bordered={false}
+          style={{ width: '100%' }}
+          bodyStyle={{ padding: screens.md ? 20 : 12 }}
+        >
           <div
             style={{
               marginBottom: 16,
@@ -136,11 +152,38 @@ function Projects() {
               <Title level={4} style={{ margin: 0 }}>项目列表</Title>
               <Text type="secondary">共 {projects.length} 个项目</Text>
             </div>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/')}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/')} className="cta-btn">
               创建项目
             </Button>
           </div>
+
+          {!showSidebar ? (
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col xs={12} md={6}>
+                <Card size="small" className="glass-card">
+                  <Statistic title="项目总数" valueRender={() => <strong><AnimatedNumber value={projects.length} /></strong>} />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small" className="glass-card">
+                  <Statistic title="待处理" valueRender={() => <AnimatedNumber value={pendingCount} />} />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small" className="glass-card">
+                  <Statistic title="处理中" valueRender={() => <AnimatedNumber value={processingCount} />} />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small" className="glass-card">
+                  <Statistic title="已完成" valueRender={() => <AnimatedNumber value={completedCount} />} />
+                </Card>
+              </Col>
+            </Row>
+          ) : null}
+
           <Table
+            className="projects-table"
             columns={columns}
             dataSource={projects}
             rowKey="id"
@@ -155,20 +198,28 @@ function Projects() {
         </Card>
       </Col>
       {showSidebar ? (
-        <Col xs={24} xl={6}>
-          <div style={{ position: 'sticky', top: 'calc(var(--app-header-height, 64px) + 16px)' }}>
+        <Col xs={24} xxl={7}>
+          <div className="projects-sidebar" style={{ position: 'sticky', top: 'calc(var(--app-header-height, 64px) + 16px)' }}>
             <Space direction="vertical" size={16} style={{ width: '100%' }}>
-              <Card title="数据概览" bordered={false}>
+              <Card
+                title="数据概览"
+                bordered={false}
+                className="glass-card hover-tilt"
+              >
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <Statistic title="项目总数" value={projects.length} />
+                <Statistic title="项目总数" valueRender={() => <strong><AnimatedNumber value={projects.length} /></strong>} />
                 <Row gutter={12}>
-                  <Col span={8}><Statistic title="待处理" value={pendingCount} /></Col>
-                  <Col span={8}><Statistic title="处理中" value={processingCount} /></Col>
-                  <Col span={8}><Statistic title="已完成" value={completedCount} /></Col>
+                  <Col span={8}><Statistic title="待处理" valueRender={() => <AnimatedNumber value={pendingCount} />} /></Col>
+                  <Col span={8}><Statistic title="处理中" valueRender={() => <AnimatedNumber value={processingCount} />} /></Col>
+                  <Col span={8}><Statistic title="已完成" valueRender={() => <AnimatedNumber value={completedCount} />} /></Col>
                 </Row>
               </Space>
               </Card>
-              <Card title="最近项目" bordered={false}>
+              <Card
+                title="最近项目"
+                bordered={false}
+                className="glass-card hover-tilt"
+              >
               {latestProject ? (
                 <Space direction="vertical" size={8}>
                   <Text strong>{latestProject.title}</Text>

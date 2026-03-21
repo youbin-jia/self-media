@@ -21,6 +21,7 @@ Usage:
   ./scripts/dev.sh status   # 查看服务状态
   ./scripts/dev.sh logs     # 查看日志路径
   ./scripts/dev.sh tail     # 实时查看服务日志（Ctrl+C 退出）
+  ./scripts/dev.sh check-llm # 检查默认LLM配置与可用性
 EOF
 }
 
@@ -346,6 +347,66 @@ do_tail() {
   tail -f "${files[@]}"
 }
 
+build_python_cmd() {
+  if command -v conda >/dev/null 2>&1; then
+    echo "conda run --no-capture-output -n self-media python"
+  elif command -v python >/dev/null 2>&1; then
+    echo "python"
+  else
+    return 1
+  fi
+}
+
+do_check_llm() {
+  ensure_backend_env
+  local python_cmd
+  python_cmd="$(build_python_cmd)" || {
+    echo "[check-llm] 未找到 python（且 conda 不可用）"
+    return 1
+  }
+
+  (
+    cd "$ROOT_DIR/backend"
+    bash -lc "$python_cmd - <<'PY'
+import asyncio
+import sys
+
+from app.config import settings
+from app.services.llm import llm_manager
+
+provider_name = settings.DEFAULT_LLM_PROVIDER
+print(f'[check-llm] DEFAULT_LLM_PROVIDER={provider_name}')
+
+try:
+    provider = llm_manager.get_provider(provider_name)
+except Exception as exc:
+    print(f'[check-llm] provider加载失败: {exc}')
+    sys.exit(1)
+
+model = getattr(provider, 'default_model', None) or (
+    provider.available_models[0] if provider.available_models else 'unknown'
+)
+print(f'[check-llm] provider={provider.provider_name}, model={model}')
+
+async def _check():
+    text = await provider.generate(
+        '请仅返回字符串OK',
+        model=model,
+        max_tokens=16,
+        temperature=0.0
+    )
+    return text or ''
+
+try:
+    result = asyncio.run(_check()).strip().replace('\n', ' ')
+    print(f'[check-llm] 调用成功, 响应预览: {result[:120]}')
+except Exception as exc:
+    print(f'[check-llm] 调用失败: {exc}')
+    sys.exit(2)
+PY"
+  )
+}
+
 main() {
   local cmd="${1:-start}"
   case "$cmd" in
@@ -363,6 +424,9 @@ main() {
       ;;
     tail)
       do_tail
+      ;;
+    check-llm)
+      do_check_llm
       ;;
     *)
       print_usage

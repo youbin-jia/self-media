@@ -126,6 +126,9 @@ chmod +x scripts/dev.sh
 # 实时查看日志（Ctrl+C 退出）
 ./scripts/dev.sh tail
 
+# 检查默认LLM是否可用（配置 + 实际调用）
+./scripts/dev.sh check-llm
+
 # 一键停止服务（仅停止由脚本启动的进程）
 ./scripts/dev.sh stop
 ```
@@ -282,7 +285,10 @@ GET /api/mobile/dashboard
 |------|------|
 | `ANTHROPIC_API_KEY` | Claude API密钥 |
 | `OPENAI_API_KEY` | OpenAI API密钥 |
-| `DEFAULT_LLM_PROVIDER` | 默认LLM（claude/openai） |
+| `KIMI_API_KEY` | Kimi API密钥（Moonshot） |
+| `KIMI_BASE_URL` | Kimi 接口地址（默认 `https://api.moonshot.cn/v1`） |
+| `KIMI_MODEL` | Kimi 模型名（默认 `moonshot-v1-8k`） |
+| `DEFAULT_LLM_PROVIDER` | 默认LLM（claude/openai/kimi） |
 
 ### TTS配置
 

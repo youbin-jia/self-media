@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Row, Col, Button, message, Modal, Form, Input, InputNumber, Select, Space } from 'antd'
+import { Card, Row, Col, Button, message, Modal, Form, Input, InputNumber, Select, Space, Typography } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { getTopics, refreshTopics, createProject } from '../services/api'
+import AnimatedNumber from '../components/AnimatedNumber'
+
+const { Title, Text } = Typography
 
 function Home() {
   const [topics, setTopics] = useState([])
@@ -77,21 +80,37 @@ function Home() {
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: '24px' }}>
+    <div className="page-home">
+      <Card className="hero-card" bordered={false}>
+        <div className="hero-main">
+          <div>
+            <Title level={2} style={{ marginBottom: 8 }}>发现热门选题，快速生成项目</Title>
+            <Text type="secondary">从话题监控到脚本生成，一步进入创作工作流。</Text>
+          </div>
+          <div className="hero-metrics">
+            <span><strong><AnimatedNumber value={topics.length} /></strong> 个热门选题</span>
+          </div>
+        </div>
+      </Card>
+
+      <div style={{ marginBottom: '30px' }}>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal} className="cta-btn">
             创建选题
           </Button>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={handleCreateTopic}>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={handleCreateTopic} className="subtle-btn">
             刷新热门选题
           </Button>
         </Space>
       </div>
-      <Row gutter={[16, 16]}>
-        {topics.map(topic => (
+      <Row gutter={[24, 24]}>
+        {topics.map((topic, index) => (
           <Col xs={24} sm={12} md={8} lg={6} key={topic.id}>
-            <Card hoverable>
+            <Card
+              hoverable
+              className="topic-card hover-tilt stagger-fade-in"
+              style={{ animationDelay: `${Math.min(0.06 * (index + 1), 0.5)}s` }}
+            >
               <Card.Meta
                 title={topic.title}
                 description={`${topic.source || '未知来源'} · 热度 ${topic.hot_score ?? '--'}`}

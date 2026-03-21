@@ -36,7 +36,26 @@ class LLMProviderManager:
         # OpenAI
         openai_key = getattr(settings, "OPENAI_API_KEY", None)
         if openai_key:
-            self._providers["openai"] = OpenAIProvider(api_key=openai_key)
+            self._providers["openai"] = OpenAIProvider(
+                api_key=openai_key,
+                config={
+                    "provider_name": "openai",
+                    "base_url": getattr(settings, "OPENAI_BASE_URL", None),
+                    "default_model": getattr(settings, "OPENAI_MODEL", "gpt-4-turbo")
+                }
+            )
+
+        # Kimi (OpenAI-compatible API)
+        kimi_key = getattr(settings, "KIMI_API_KEY", None)
+        if kimi_key:
+            self._providers["kimi"] = OpenAIProvider(
+                api_key=kimi_key,
+                config={
+                    "provider_name": "kimi",
+                    "base_url": getattr(settings, "KIMI_BASE_URL", "https://api.moonshot.cn/v1"),
+                    "default_model": getattr(settings, "KIMI_MODEL", "moonshot-v1-8k")
+                }
+            )
 
         # GLM
         glm_endpoint = getattr(settings, "GLM_ENDPOINT", None)

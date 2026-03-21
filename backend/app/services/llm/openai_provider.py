@@ -13,20 +13,26 @@ class OpenAIProvider(BaseLLMProvider):
     def __init__(self, api_key: str, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.api_key = api_key
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.base_url = self.config.get("base_url")
+        self.default_model = self.config.get("default_model", "gpt-4-turbo")
+        self._provider_name = self.config.get("provider_name", "openai")
+        self.client = AsyncOpenAI(api_key=api_key, base_url=self.base_url)
 
     @property
     def provider_name(self) -> str:
-        return "openai"
+        return self._provider_name
 
     @property
     def available_models(self) -> List[str]:
-        return [
+        models = [
             "gpt-4-turbo",
             "gpt-4-turbo-preview",
             "gpt-4o",
             "gpt-4o-mini"
         ]
+        if self.default_model not in models:
+            models.insert(0, self.default_model)
+        return models
 
     async def generate(
         self,
@@ -36,7 +42,7 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         **kwargs
     ) -> str:
-        model = model or "gpt-4-turbo"
+        model = model or self.default_model
         try:
             response = await self.client.chat.completions.create(
                 model=model,
@@ -60,7 +66,7 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         **kwargs
     ) -> str:
-        model = model or "gpt-4-turbo"
+        model = model or self.default_model
         try:
             response = await self.client.chat.completions.create(
                 model=model,

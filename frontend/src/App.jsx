@@ -1,9 +1,10 @@
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Menu, Breadcrumb, Typography, Grid } from 'antd'
-import { HomeOutlined, ProjectOutlined } from '@ant-design/icons'
+import { Layout, Menu, Breadcrumb, Typography, Grid, Switch } from 'antd'
+import { HomeOutlined, ProjectOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 import Home from './pages/Home'
 import Projects from './pages/Projects'
 import ProjectWorkflow from './pages/ProjectWorkflow'
+import { useThemeMode } from './context/ThemeContext'
 
 const { Header, Content } = Layout
 const { Text } = Typography
@@ -13,6 +14,8 @@ function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const screens = useBreakpoint()
+  const { themeMode, setThemeMode } = useThemeMode()
+  const isDark = themeMode === 'dark'
   const headerHeight = screens.md ? 64 : 56
   const selectedKey = location.pathname.startsWith('/projects') ? '/projects' : '/'
   const pathSegments = location.pathname.split('/').filter(Boolean)
@@ -45,8 +48,12 @@ function App() {
   }
 
   return (
-    <Layout style={{ minHeight: '100vh', '--app-header-height': `${headerHeight}px` }}>
+    <Layout
+      className={`app-shell ${isDark ? 'theme-dark' : 'theme-light'}`}
+      style={{ minHeight: '100vh', '--app-header-height': `${headerHeight}px` }}
+    >
       <Header
+        className="app-header"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -57,10 +64,11 @@ function App() {
           lineHeight: `${headerHeight}px`
         }}
       >
-        <div style={{ color: 'white', fontSize: '18px', fontWeight: 'bold', marginRight: '40px' }}>
+        <div className="app-brand">
           自媒体视频自动化系统
         </div>
         <Menu
+          className="app-nav-menu"
           theme="dark"
           mode="horizontal"
           selectedKeys={[selectedKey]}
@@ -71,13 +79,21 @@ function App() {
           ]}
           onClick={({ key }) => navigate(key)}
         />
+        <div className="theme-switch-wrap">
+          <Switch
+            checked={isDark}
+            checkedChildren={<MoonOutlined />}
+            unCheckedChildren={<SunOutlined />}
+            onChange={(checked) => setThemeMode(checked ? 'dark' : 'light')}
+          />
+        </div>
       </Header>
-      <Content style={{ padding: contentPadding, background: '#f0f2f5' }}>
-        <div style={{ width: '100%', maxWidth: contentMaxWidth, margin: '0 auto' }}>
-          <div style={{ marginBottom: 12 }}>
+      <Content className="app-content" style={{ padding: contentPadding }}>
+        <div className="app-content-inner" style={{ width: '100%', maxWidth: contentMaxWidth, margin: '0 auto' }}>
+          <div className="app-breadcrumb-wrap" style={{ marginBottom: 12 }}>
             <Breadcrumb items={breadcrumbItems} />
           </div>
-          <div style={{ background: 'transparent' }}>
+          <div key={location.pathname} className="page-transition">
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/projects" element={<Projects />} />
