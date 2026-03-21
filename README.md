@@ -34,6 +34,7 @@
 
 ### 环境要求
 
+- Conda (Miniconda 或 Anaconda)
 - Python 3.10+
 - Redis 6.0+
 - FFmpeg 4.0+
@@ -45,12 +46,9 @@
 git clone <repository-url>
 cd self-media
 
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate
-
-# 安装依赖
-pip install -r backend/requirements.txt
+# 创建并激活 conda 环境
+conda env create -f environment.yml
+conda activate self-media
 
 # 配置环境变量
 cp backend/.env.example backend/.env
@@ -106,6 +104,7 @@ self-media/
 ├── plugins/               # 插件目录
 │   └── material_sources/  # 素材源插件
 ├── data/                  # 数据存储
+├── environment.yml        # Conda环境配置
 ├── ARCHITECTURE.md        # 架构文档
 ├── DEPLOYMENT.md          # 部署指南
 └── USER_GUIDE.md          # 使用说明
