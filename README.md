@@ -76,6 +76,101 @@ open http://localhost:8000/docs
 curl http://localhost:8000/health
 ```
 
+### 一键开发启动（推荐）
+
+项目提供 `scripts/dev.sh` 用于一键启动本地开发依赖与服务（Redis、API、Celery Worker、Frontend）。
+
+#### 前置要求
+
+- 已安装并可使用 `conda`（并激活 `self-media` 环境）
+- 已安装 Node.js 和 npm（用于前端）
+- 已安装 Redis（脚本会尝试自动启动本机 `redis-server`）
+
+#### 首次使用
+
+```bash
+cd self-media
+chmod +x scripts/dev.sh
+./scripts/dev.sh start
+```
+
+脚本会自动执行以下操作：
+
+- 启动前自检（`ss`、`curl`、`npm` 命令可用性）
+- 启动前端口检查（重点检查 `8000`）
+  - 若发现外部旧 `uvicorn app.main:app` 占用，会自动停止并拉起最新后端
+  - 若被其他未知进程占用，会中断启动并提示先释放端口
+- 若 `backend/.env` 不存在，则由 `backend/.env.example` 自动生成
+- 自动创建 `backend/data` 目录（避免 SQLite 文件路径报错）
+- 前端缺少依赖时自动执行 `npm install`
+- 启动并托管以下进程：
+  - `uvicorn app.main:app --reload`
+  - `celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low`
+  - `npm run dev`
+- 启动后健康检查：
+  - 后端 `/health` 可用性检查
+  - 关键路由检查：`/api/projects/{id}/steps/script/execute`（避免旧进程导致功能 404）
+
+#### 常用命令
+
+```bash
+# 一键启动所有开发服务
+./scripts/dev.sh start
+
+# 查看服务状态
+./scripts/dev.sh status
+
+# 查看日志目录与日志文件
+./scripts/dev.sh logs
+
+# 实时查看日志（Ctrl+C 退出）
+./scripts/dev.sh tail
+
+# 一键停止服务（仅停止由脚本启动的进程）
+./scripts/dev.sh stop
+```
+
+#### 日志与运行文件
+
+- 目录：`.devrun/`
+- PID 文件：`.devrun/pids/`
+- 日志文件：`.devrun/logs/`
+  - `backend.log`
+  - `worker.log`
+  - `frontend.log`
+  - `redis.log`（仅脚本拉起 Redis 时）
+
+可直接使用以下命令查看实时日志：
+
+```bash
+tail -f .devrun/logs/backend.log
+tail -f .devrun/logs/worker.log
+tail -f .devrun/logs/frontend.log
+```
+
+#### 常见问题排查
+
+- `Cannot connect to redis://localhost:6379/0`
+  - Redis 未启动或端口被占用，先执行 `redis-cli -h localhost -p 6379 ping`，期待返回 `PONG`
+- `vite: not found`
+  - 前端依赖未安装，执行 `cd frontend && npm install`
+- `sqlite3.OperationalError: unable to open database file`
+  - 确保 `backend/data` 目录存在；脚本已自动处理，如手动启动请自行创建
+- `Address already in use`
+  - 端口冲突（常见 8000/5173/6379），先停止旧进程或修改端口配置
+- 启动时提示 `关键路由缺失` 或脚本生成仍 404
+  - 说明正在运行的后端不是最新代码版本（或运行目录错误）
+  - 执行 `./scripts/dev.sh stop && ./scripts/dev.sh start`，并确认 `status` 正常
+- 启动时提示 `端口 8000 被其他进程占用`
+  - 脚本仅会自动停止可识别的旧 uvicorn 进程
+  - 若是其他进程占用，请手动释放端口后重试
+
+#### 注意事项
+
+- `./scripts/dev.sh stop` 只会停止由该脚本记录 PID 的进程，不会影响你手动启动且未被脚本记录的其他进程
+- 若你已经手动启动了某项服务，脚本会尽量复用（或提示已在运行）
+- 生产环境请勿使用该脚本，生产部署请参考 [DEPLOYMENT.md](DEPLOYMENT.md)
+
 ## 文档
 
 | 文档 | 描述 |

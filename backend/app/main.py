@@ -25,6 +25,8 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:3000",
     ],
+    # Allow any localhost/127.0.0.1 port in development (e.g. Vite fallback to 3001)
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

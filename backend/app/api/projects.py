@@ -4,14 +4,36 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 
 from app.database import get_db
 from app.models.project import Project
+from app.models.script import Script
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.middleware.auth import get_current_user
 from app.models.user import User
+from app.services.script_generator import ScriptGenerator
 
 router = APIRouter()
+WORKFLOW_STEPS = ["script", "review", "visual", "audio", "video"]
+
+
+def _init_steps(project_metadata: Optional[dict]) -> dict:
+    """Initialize workflow steps in metadata if not present."""
+    metadata = dict(project_metadata or {})
+    existing_steps = metadata.get("steps") if isinstance(metadata.get("steps"), dict) else {}
+
+    steps = {}
+    for step in WORKFLOW_STEPS:
+        step_data = existing_steps.get(step, {})
+        steps[step] = {
+            "status": step_data.get("status", "wait"),
+            "output": step_data.get("output"),
+            "updated_at": step_data.get("updated_at")
+        }
+
+    metadata["steps"] = steps
+    return metadata
 
 
 class BatchDeleteRequest(BaseModel):
@@ -301,3 +323,121 @@ async def batch_update_project_status(
     db.commit()
 
     return {"updated_count": len(projects)}
+
+
+@router.post("/{project_id}/steps/{step_name}/execute")
+async def execute_project_step(
+    project_id: str,
+    step_name: str,
+    db: Session = Depends(get_db)
+):
+    """Execute a workflow step for the project."""
+    if step_name not in WORKFLOW_STEPS:
+        raise HTTPException(status_code=400, detail=f"Unsupported step: {step_name}")
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    metadata = _init_steps(project.project_metadata)
+    steps = metadata["steps"]
+    steps[step_name]["status"] = "processing"
+    steps[step_name]["updated_at"] = datetime.now().isoformat()
+
+    output = None
+    if step_name == "script":
+        topic = project.topic_title or project.title
+        try:
+            generator = ScriptGenerator()
+            outline = await generator.generate_outline(topic)
+            full_result = await generator.generate_full_script(outline, topic)
+            full_script = full_result["full_script"]
+            segments = [seg.model_dump() for seg in full_result["segments"]]
+
+            script = db.query(Script).filter(Script.project_id == project_id).first()
+            if not script:
+                script = Script(
+                    project_id=project_id,
+                    outline=outline,
+                    full_script=full_script,
+                    segments=segments,
+                    version=1,
+                    is_approved=False
+                )
+                db.add(script)
+            else:
+                script.outline = outline
+                script.full_script = full_script
+                script.segments = segments
+                script.version = (script.version or 1) + 1
+
+            output = {
+                "topic": topic,
+                "outline": outline,
+                "full_script": full_script,
+                "segments_count": len(segments),
+                "fallback": False
+            }
+        except Exception as exc:
+            # Fallback output lets local development run without LLM keys.
+            outline = f"1. 开场引入：{topic}\n2. 核心观点展开\n3. 结尾总结与互动引导"
+            full_script = (
+                f"大家好，今天我们聊聊「{topic}」。\n"
+                "先用一个常见场景切入，再给出3个可执行的方法，"
+                "最后做总结并邀请大家评论区交流。"
+            )
+            script = db.query(Script).filter(Script.project_id == project_id).first()
+            if not script:
+                script = Script(
+                    project_id=project_id,
+                    outline=outline,
+                    full_script=full_script,
+                    segments=[],
+                    version=1,
+                    is_approved=False
+                )
+                db.add(script)
+            else:
+                script.outline = outline
+                script.full_script = full_script
+                script.segments = []
+                script.version = (script.version or 1) + 1
+
+            output = {
+                "topic": topic,
+                "outline": outline,
+                "full_script": full_script,
+                "segments_count": 0,
+                "fallback": True,
+                "reason": str(exc)
+            }
+    else:
+        output = {
+            "message": f"{step_name} 步骤已执行（当前为开发占位实现）"
+        }
+
+    steps[step_name]["status"] = "completed"
+    steps[step_name]["output"] = output
+    steps[step_name]["updated_at"] = datetime.now().isoformat()
+    project.current_step = step_name
+    project.project_metadata = metadata
+
+    db.commit()
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "step": step_name,
+        "status": steps[step_name]["status"],
+        "output": output
+    }
+
+
+@router.post("/{project_id}/steps/{step_name}/regenerate")
+async def regenerate_project_step(
+    project_id: str,
+    step_name: str,
+    db: Session = Depends(get_db)
+):
+    """Regenerate a workflow step (same behavior as execute for now)."""
+    return await execute_project_step(project_id=project_id, step_name=step_name, db=db)

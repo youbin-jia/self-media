@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Steps, Card, Button, message, Spin, Typography, Divider } from 'antd'
+import { Steps, Card, Button, message, Spin, Typography, Divider, Space, Tag, Alert, Progress } from 'antd'
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -42,9 +42,10 @@ function ProjectWorkflow() {
   }
 
   const updateCurrentStep = (projectData) => {
-    if (!projectData || !projectData.steps) return
+    const stepsData = projectData?.steps || projectData?.metadata?.steps
+    if (!stepsData) return
     const stepIndex = workflowSteps.findIndex(
-      step => projectData.steps[step.key]?.status !== 'completed'
+      step => stepsData[step.key]?.status !== 'completed'
     )
     setCurrentStep(stepIndex === -1 ? workflowSteps.length - 1 : stepIndex)
   }
@@ -72,11 +73,25 @@ function ProjectWorkflow() {
   }
 
   const getStepStatus = (stepKey) => {
-    if (!project || !project.steps) return 'wait'
-    const step = project.steps[stepKey]
+    const step = project?.steps?.[stepKey] || project?.metadata?.steps?.[stepKey]
     if (!step) return 'wait'
     return step.status === 'completed' ? 'finish' : step.status === 'processing' ? 'process' : 'wait'
   }
+
+  const getStatusMeta = (stepKey) => {
+    const step = project?.steps?.[stepKey] || project?.metadata?.steps?.[stepKey]
+    const status = step?.status || 'wait'
+    if (status === 'completed') {
+      return { cardColor: '#f6ffed', borderColor: '#b7eb8f', tagColor: 'success', text: '已完成', progress: 100 }
+    }
+    if (status === 'processing') {
+      return { cardColor: '#e6f4ff', borderColor: '#91caff', tagColor: 'processing', text: '执行中', progress: 60 }
+    }
+    return { cardColor: '#fafafa', borderColor: '#d9d9d9', tagColor: 'default', text: '待执行', progress: 0 }
+  }
+
+  const completedCount = workflowSteps.filter((step) => getStepStatus(step.key) === 'finish').length
+  const overallPercent = Math.round((completedCount / workflowSteps.length) * 100)
 
   if (loading) {
     return (
@@ -93,6 +108,21 @@ function ProjectWorkflow() {
   return (
     <div>
       <Title level={2}>{project.title}</Title>
+      <Card style={{ marginBottom: 16 }}>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <div>
+            <Paragraph style={{ marginBottom: 4 }}>
+              <strong>总体进度：</strong>{completedCount}/{workflowSteps.length} 步
+            </Paragraph>
+            <Tag color={overallPercent === 100 ? 'success' : 'processing'}>
+              {overallPercent === 100 ? '流程完成' : '进行中'}
+            </Tag>
+          </div>
+          <div style={{ minWidth: 260 }}>
+            <Progress percent={overallPercent} status={overallPercent === 100 ? 'success' : 'active'} />
+          </div>
+        </Space>
+      </Card>
       <Divider />
 
       <Steps current={currentStep} style={{ marginBottom: '24px' }}>
@@ -111,49 +141,74 @@ function ProjectWorkflow() {
       </Steps>
 
       {workflowSteps.map((step, index) => (
-        <Card
-          key={step.key}
-          title={`${index + 1}. ${step.title}`}
-          style={{ marginBottom: '16px' }}
-          extra={
-            <Space>
-              <Button
-                type="primary"
-                onClick={() => handleExecuteStep(step.key)}
-                disabled={getStepStatus(step.key) === 'finish'}
-              >
-                执行
-              </Button>
-              <Button
-                onClick={() => handleRegenerateStep(step.key)}
-                disabled={getStepStatus(step.key) === 'wait'}
-              >
-                重新生成
-              </Button>
-            </Space>
-          }
-        >
-          {project.steps && project.steps[step.key] ? (
-            <div>
-              <Paragraph>
-                <strong>状态：</strong>
-                <Tag color={getStepStatus(step.key) === 'finish' ? 'green' : 'blue'}>
-                  {project.steps[step.key].status}
-                </Tag>
-              </Paragraph>
-              {project.steps[step.key].output && (
-                <Paragraph>
-                  <strong>输出：</strong>
-                  <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px' }}>
-                    {JSON.stringify(project.steps[step.key].output, null, 2)}
-                  </pre>
-                </Paragraph>
+        (() => {
+          const stepData = project?.steps?.[step.key] || project?.metadata?.steps?.[step.key]
+          const statusMeta = getStatusMeta(step.key)
+          return (
+            <Card
+              key={step.key}
+              title={`${index + 1}. ${step.title}`}
+              style={{
+                marginBottom: '16px',
+                background: statusMeta.cardColor,
+                borderColor: statusMeta.borderColor
+              }}
+              extra={
+                <Space>
+                  <Tag color={statusMeta.tagColor}>{statusMeta.text}</Tag>
+                  <Button
+                    type="primary"
+                    onClick={() => handleExecuteStep(step.key)}
+                    disabled={getStepStatus(step.key) === 'finish'}
+                  >
+                    执行
+                  </Button>
+                  <Button
+                    onClick={() => handleRegenerateStep(step.key)}
+                    disabled={getStepStatus(step.key) === 'wait'}
+                  >
+                    重新生成
+                  </Button>
+                </Space>
+              }
+            >
+              <Progress
+                percent={statusMeta.progress}
+                size="small"
+                status={statusMeta.progress === 100 ? 'success' : statusMeta.progress > 0 ? 'active' : 'normal'}
+                showInfo={false}
+                style={{ marginBottom: 12 }}
+              />
+              {stepData ? (
+                <div>
+                  <Paragraph>
+                    <strong>状态：</strong>
+                    <Tag color={statusMeta.tagColor}>{stepData.status}</Tag>
+                  </Paragraph>
+                  {stepData.output && (
+                    <Paragraph>
+                      <strong>输出：</strong>
+                      {step.key === 'script' && stepData.output?.fallback ? (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          style={{ marginBottom: '12px' }}
+                          message="当前为离线占位结果"
+                          description="未成功调用 AI 服务（如 API Key 无效或网络异常），系统返回了开发占位脚本，仅用于流程联调。"
+                        />
+                      ) : null}
+                      <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px' }}>
+                        {JSON.stringify(stepData.output, null, 2)}
+                      </pre>
+                    </Paragraph>
+                  )}
+                </div>
+              ) : (
+                <Paragraph type="secondary">等待执行</Paragraph>
               )}
-            </div>
-          ) : (
-            <Paragraph type="secondary">等待执行</Paragraph>
-          )}
-        </Card>
+            </Card>
+          )
+        })()
       ))}
     </div>
   )

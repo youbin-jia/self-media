@@ -6,15 +6,13 @@ const api = axios.create({
 })
 
 // Topics
-export const getTopics = () => api.get('/topics')
-export const createTopic = (data) => api.post('/topics', data)
-export const updateTopic = (id, data) => api.put(`/topics/${id}`, data)
-export const deleteTopic = (id) => api.delete(`/topics/${id}`)
+export const getTopics = (params) => api.get('/topics/list', { params })
+export const refreshTopics = () => api.post('/topics/refresh')
 
 // Projects
-export const getProjects = () => api.get('/projects')
+export const getProjects = () => api.get('/projects/')
 export const getProject = (id) => api.get(`/projects/${id}`)
-export const createProject = (data) => api.post('/projects', data)
+export const createProject = (data) => api.post('/projects/', data)
 export const updateProject = (id, data) => api.put(`/projects/${id}`, data)
 export const deleteProject = (id) => api.delete(`/projects/${id}`)
 
