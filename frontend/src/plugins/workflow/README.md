@@ -5,6 +5,7 @@
 | 组件 | 用途 |
 |------|------|
 | `FinalVideoPreviewPlugin` | 视频步骤：内嵌 HTML5 播放成片（同源 `/api/projects/.../video/download`） |
-| `VideoPipelineEnvPlugin` | 调用 `GET /api/video/pipeline-env` 展示通义万相 / Wan I2V 配置状态 |
+| `VideoPipelineEnvPlugin` | 调用 `GET /api/video/pipeline-env` 展示 LTX-2 / Wan I2V 等管线配置 |
+| `VideoGenerationMonitorPlugin` | 视频步骤：LTX 分镜看板、活动日志、本机 CPU/GPU（`/api/video/host-metrics`） |
 
 在 `ProjectWorkflow.jsx` 中按需引入即可。

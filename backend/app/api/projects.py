@@ -265,8 +265,17 @@ def _set_step_progress(
         seconds = int((end_dt - start_dt).total_seconds())
         return max(0, seconds)
 
-    steps = metadata.get("steps", {})
-    step = steps.get(step_name, {})
+    # 其它 Session（如 _merge_ltx_shot_board、分镜进度回调）已 commit 时，传入的 metadata 可能陈旧，先从 DB 同步
+    try:
+        db.refresh(project)
+        fresh = dict(project.project_metadata or {})
+        metadata.clear()
+        metadata.update(fresh)
+    except Exception:
+        pass
+
+    steps = metadata.setdefault("steps", {})
+    step = dict(steps.get(step_name) or {})
     now = datetime.now().isoformat()
 
     if status is not None:
@@ -346,6 +355,10 @@ def _set_step_progress(
         if len(logs) > STEP_ACTIVITY_LOG_MAX:
             logs = logs[-STEP_ACTIVITY_LOG_MAX :]
         progress["activity_log"] = logs
+    if reset_activity_log:
+        progress["ltx_shots"] = []
+        progress["ltx_shots_completed"] = 0
+        progress["ltx_shots_total"] = 0
 
     step["progress"] = progress
 
@@ -354,6 +367,63 @@ def _set_step_progress(
     project.current_step = step_name
     project.project_metadata = metadata
     db.commit()
+
+
+def _merge_ltx_shot_board(project_id: str, step_name: str, detail: dict) -> None:
+    """LTX 分镜：写入 progress.ltx_shots，供前端分开展示每镜输入与输出并刷新进度。"""
+    if not isinstance(detail, dict):
+        return
+    sdb = SessionLocal()
+    try:
+        proj = sdb.query(Project).filter(Project.id == project_id).first()
+        if not proj:
+            return
+        meta = dict(proj.project_metadata or {})
+        steps = dict(meta.get("steps") or {})
+        step = dict(steps.get(step_name) or {})
+        progress = dict(step.get("progress") or {})
+        shots = list(progress.get("ltx_shots") or [])
+        idx = int(detail.get("shot_index", 0))
+        total = int(detail.get("total") or 0)
+        while len(shots) <= idx:
+            shots.append(
+                {
+                    "shot_index": len(shots),
+                    "status": "pending",
+                    "total": total,
+                }
+            )
+        row = dict(shots[idx])
+        row["shot_index"] = idx
+        row["total"] = total
+        if detail.get("shot_no") is not None:
+            row["shot_no"] = detail.get("shot_no")
+        ev = str(detail.get("event") or "")
+        if ev == "start":
+            row["status"] = "generating"
+            row["prompt"] = str(detail.get("prompt") or "")[:12000]
+            row["narration"] = str(detail.get("narration") or "")[:12000]
+            row["duration_sec"] = detail.get("duration_sec")
+            row.pop("output_path", None)
+            row.pop("size_kb", None)
+        elif ev == "complete":
+            row["status"] = "done" if detail.get("ok") else "placeholder"
+            op = detail.get("output_path")
+            if op:
+                row["output_path"] = str(op)[:2000]
+            row["size_kb"] = detail.get("size_kb")
+        shots[idx] = row
+        progress["ltx_shots"] = shots
+        done = sum(1 for s in shots if s.get("status") in ("done", "placeholder"))
+        progress["ltx_shots_completed"] = done
+        progress["ltx_shots_total"] = total
+        step["progress"] = progress
+        steps[step_name] = step
+        meta["steps"] = steps
+        proj.project_metadata = meta
+        sdb.commit()
+    finally:
+        sdb.close()
 
 
 def _append_step_activity_log(
@@ -431,7 +501,7 @@ def _video_synth_progress_callback(project_id: str, step_name: str):
 
 
 def _video_shot_timeline_progress_factory(project_id: str, step_name: str):
-    """分镜时间轴（含通义 I2V）每镜回调。"""
+    """分镜时间轴（LTX / 素材裁切等）每镜进度回调。"""
 
     async def on_shot(idx: int, total: int, msg: str) -> None:
         sdb = SessionLocal()
@@ -1312,6 +1382,7 @@ async def execute_project_step(
             synthesis_mode = "materials_only"
             timeline: Optional[List[Dict[str, Any]]] = None
             use_ltx2_t2v = False
+            ltx_shot_board: List[Any] = []
             if shots:
                 shot_cb = _video_shot_timeline_progress_factory(project_id, step_name)
                 if ltx2_t2v_available():
@@ -1329,13 +1400,16 @@ async def execute_project_step(
                         ],
                     )
                     narrations = narration_lines_for_shots(db, project_id, len(shots))
-                    timeline, shot_stats = await build_ltx2_text_shot_timeline(
+                    timeline, shot_stats, ltx_shot_board = await build_ltx2_text_shot_timeline(
                         shots,
                         narrations,
                         project_id=project_id,
                         on_shot_progress=shot_cb,
                         on_activity_log=lambda m: _append_step_activity_log(
                             project_id, step_name, m
+                        ),
+                        on_shot_board=lambda d: _merge_ltx_shot_board(
+                            project_id, step_name, d
                         ),
                     )
                     synthesis_mode = "ltx2_text_shots"
@@ -1349,7 +1423,7 @@ async def execute_project_step(
                         status="processing",
                         percent=35,
                         stage="video_shot_timeline",
-                        message="按视觉规划组装分镜时间轴（切素材 / 生图）",
+                        message="按视觉规划组装分镜时间轴（裁切素材 / 静图等）",
                         log_append=f"未启用 LTX：走视觉时间轴（素材 {len(materials)}，分镜 {len(shots)}）",
                     )
                     timeline, shot_stats = await build_visual_shot_timeline(
@@ -1444,6 +1518,7 @@ async def execute_project_step(
                 "shots_used": len(shots) if shots else 0,
                 "shot_timeline_stats": shot_stats,
                 "ltx2_t2v": use_ltx2_t2v,
+                "ltx_shot_board": ltx_shot_board if use_ltx2_t2v else [],
                 "ltx2_skip_external_tts": bool(
                     use_ltx2_t2v and getattr(settings, "LTX2_T2V_SKIP_EXTERNAL_TTS", True)
                 ),
@@ -1461,6 +1536,7 @@ async def execute_project_step(
                 "synthesis_mode": synthesis_mode,
                 "shots_used": len(shots) if shots else 0,
                 "shot_timeline_stats": shot_stats,
+                "ltx_shot_board": ltx_shot_board if use_ltx2_t2v else [],
                 "message": "视频合成完成"
             }
         else:

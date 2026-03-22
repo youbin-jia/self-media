@@ -260,10 +260,11 @@ async def build_ltx2_text_shot_timeline(
     project_id: Optional[str] = None,
     on_shot_progress: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
     on_activity_log: Optional[Callable[[str], None]] = None,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    on_shot_board: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]]]:
     """
     无参考图：按分镜调用 LTX-2 侧车文本生成音视频，再拼接。
-    不走通义 I2V、不调用 DALL·E。
+    不调用 DALL·E 生图；与 Wan I2V 素材链路无关。
     """
     from app.services.ltx2_video import generate_ltx2_t2v_clip_async
 
@@ -278,6 +279,7 @@ async def build_ltx2_text_shot_timeline(
     cache_dir = Path(settings.DATA_DIR) / "ltx2_t2v_cache" / (project_id or "default")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    ltx_shot_board_final: List[Dict[str, Any]] = []
     total = len(shots)
     w = int(getattr(settings, "LTX2_T2V_WIDTH", 1920) or 1920)
     h = int(getattr(settings, "LTX2_T2V_HEIGHT", 1088) or 1088)
@@ -299,6 +301,19 @@ async def build_ltx2_text_shot_timeline(
                 f"镜头 {sn}：LTX-2 文本生成音视频（含对白）…",
             )
 
+        if on_shot_board:
+            on_shot_board(
+                {
+                    "event": "start",
+                    "shot_index": idx,
+                    "shot_no": sn,
+                    "total": total,
+                    "prompt": prompt,
+                    "narration": narr,
+                    "duration_sec": dur,
+                }
+            )
+
         stem = f"{project_id or 'p'}_{idx}_{shot.get('shot_no', idx)}"
         if on_activity_log:
             on_activity_log(
@@ -318,19 +333,69 @@ async def build_ltx2_text_shot_timeline(
         if vp and os.path.isfile(vp):
             stats["ltx2_t2v"] += 1
             timeline.append({"path": vp, "duration_sec": dur})
+            sz = os.path.getsize(vp)
+            if on_shot_board:
+                on_shot_board(
+                    {
+                        "event": "complete",
+                        "shot_index": idx,
+                        "shot_no": sn,
+                        "total": total,
+                        "ok": True,
+                        "output_path": vp,
+                        "size_kb": sz // 1024,
+                    }
+                )
             if on_activity_log:
-                sz = os.path.getsize(vp)
                 on_activity_log(
                     f"镜头 {sn}：侧车返回 OK，已缓存 {vp}（{sz // 1024} KiB）"
                 )
+            ltx_shot_board_final.append(
+                {
+                    "shot_index": idx,
+                    "shot_no": sn,
+                    "total": total,
+                    "status": "done",
+                    "prompt": prompt,
+                    "narration": narr,
+                    "duration_sec": dur,
+                    "output_path": vp,
+                    "size_kb": sz // 1024,
+                }
+            )
             continue
 
         stats["placeholder"] += 1
         timeline.append({"duration_sec": dur, "placeholder": True})
+        if on_shot_board:
+            on_shot_board(
+                {
+                    "event": "complete",
+                    "shot_index": idx,
+                    "shot_no": sn,
+                    "total": total,
+                    "ok": False,
+                    "output_path": None,
+                    "size_kb": None,
+                }
+            )
         if on_activity_log:
             on_activity_log(
                 f"镜头 {sn}：LTX 未返回有效文件，使用占位片段（请查侧车/Comfy 日志）"
             )
+        ltx_shot_board_final.append(
+            {
+                "shot_index": idx,
+                "shot_no": sn,
+                "total": total,
+                "status": "placeholder",
+                "prompt": prompt,
+                "narration": narr,
+                "duration_sec": dur,
+                "output_path": None,
+                "size_kb": None,
+            }
+        )
 
     hints: List[str] = []
     if total > 0 and stats.get("placeholder") == total:
@@ -352,7 +417,7 @@ async def build_ltx2_text_shot_timeline(
         "wan_i2v_skipped": True,
         "hints": hints,
     }
-    return timeline, stats
+    return timeline, stats, ltx_shot_board_final
 
 
 async def build_visual_shot_timeline(

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Card, Space, Tag, Alert, Spin, Typography } from 'antd'
-import { CloudServerOutlined } from '@ant-design/icons'
+import { Card, Space, Tag, Alert, Spin, Typography, Tooltip } from 'antd'
+import { CloudServerOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { getVideoPipelineEnv } from '../../services/api'
 
 const { Paragraph } = Typography
 
 /**
- * 工作流插件：视频管线 / 通义万相环境自检
+ * 工作流插件：视频管线环境自检（主力 LTX-2，Wan I2V 可选）
  */
 export function VideoPipelineEnvPlugin() {
   const [loading, setLoading] = useState(true)
@@ -49,12 +49,32 @@ export function VideoPipelineEnvPlugin() {
   const wanOn = data?.wan_i2v_enabled
   const ltxOn = data?.ltx2_t2v_enabled
   const ltxOk = data?.ltx2_t2v_ready
+  const hints = Array.isArray(data?.hints) ? data.hints : []
+  const hintTooltip = hints.length
+    ? (
+      <div style={{ maxWidth: 420 }}>
+        {hints.map((h, i) => (
+          <Paragraph key={`h-${i}`} style={{ marginBottom: i === hints.length - 1 ? 0 : 8, whiteSpace: 'pre-wrap' }}>
+            {i + 1}. {h}
+          </Paragraph>
+        ))}
+      </div>
+    )
+    : '当前无额外说明'
 
   return (
     <Card
       size="small"
       className="workflow-plugin-pipeline-env"
-      title={(<Space><CloudServerOutlined /><span>视频生成环境（LTX-2 / Wan I2V）</span></Space>)}
+      title={(
+        <Space wrap>
+          <CloudServerOutlined />
+          <span>视频生成环境（LTX-2 主力 · Wan I2V 可选）</span>
+          <Tooltip title={hintTooltip} placement="bottomLeft">
+            <InfoCircleOutlined style={{ color: 'rgba(0,0,0,0.45)', cursor: 'help' }} />
+          </Tooltip>
+        </Space>
+      )}
     >
       <Space wrap style={{ marginBottom: 8 }}>
         <Tag color={ltxOn ? 'blue' : 'default'}>LTX2 T2V {ltxOn ? '已启用' : '未启用'}</Tag>
@@ -68,7 +88,7 @@ export function VideoPipelineEnvPlugin() {
         <Tag>任务：{data?.wan_task || '-'}</Tag>
         <Tag>分辨率：{data?.wan_size || '-'}</Tag>
       </Space>
-      <Space wrap size={[4, 4]} style={{ marginBottom: 8 }}>
+      <Space wrap size={[4, 4]} style={{ marginBottom: 0 }}>
         <Tag color={data?.ltx2_endpoint_configured ? 'processing' : 'default'}>
           LTX 端点{data?.ltx2_endpoint_configured ? '已配' : '未配'}
         </Tag>
@@ -82,15 +102,6 @@ export function VideoPipelineEnvPlugin() {
           权重目录{data?.wan_ckpt_dir_populated ? '已有文件' : '空/未配'}
         </Tag>
       </Space>
-      {Array.isArray(data?.hints) && data.hints.length ? (
-        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          {data.hints.map((h, i) => (
-            <Alert key={`hint-${i}`} type="info" showIcon message={h} />
-          ))}
-        </Space>
-      ) : (
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>暂无提示</Paragraph>
-      )}
     </Card>
   )
 }

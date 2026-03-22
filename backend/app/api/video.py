@@ -36,7 +36,7 @@ def _wan_ckpt_dir_populated(ckpt: str) -> bool:
 @router.get("/pipeline-env")
 async def get_video_pipeline_environment() -> Dict[str, Any]:
     """
-    返回视频合成 / LTX-2 T2V / 通义万相 Wan I2V 相关环境状态（不含密钥），供前端展示与自检。
+    返回视频合成 / LTX-2 T2V / Wan I2V（可选）相关环境状态（不含密钥），供前端展示与自检。
     """
     from app.services.wan_video import wan_i2v_available
 
@@ -114,7 +114,7 @@ def _pipeline_env_hints(
     if ltx_enabled and ltx_ready:
         hints.append(
             "LTX-2 文本生成音视频已就绪：有视觉分镜时将优先走 LTX 侧车（无需参考图），"
-            "不再使用通义 I2V / DALL·E 生图链路。"
+            "不走 DALL·E 生图与 Wan I2V 素材链路。"
         )
         if isinstance(ltx_sidecar_health, dict) and ltx_sidecar_health.get(
             "comfy_ready_for_real_ltx"
@@ -146,7 +146,7 @@ def _pipeline_env_hints(
             hints.append("WAN_I2V 未开启（可忽略）：视频步在含分镜时将走 LTX 侧车。")
         else:
             hints.append(
-                "WAN_I2V_ENABLED 未开启：分镜时间轴将使用静图/DALL·E，不走通义万相 I2V。"
+                "WAN_I2V_ENABLED 未开启：未走 Wan 图生视频；有分镜时由 LTX 或静图/素材时间轴负责。"
             )
         return hints
     mode = (getattr(settings, "WAN_I2V_MODE", None) or "subprocess").lower()
@@ -162,8 +162,8 @@ def _pipeline_env_hints(
             hints.append("请下载权重到 WAN_I2V_CKPT_DIR（见 docs/WAN2.1_LOCAL.md）。")
     if wan_ready:
         hints.append(
-            "通义万相 I2V 已就绪：每镜需先有参考图（本地图/视频）；"
-            "视频步会自动合并数据库「采集素材」与 metadata.materials，再按需调用 I2V。"
+            "Wan I2V 已就绪：每镜需先有参考图（本地图/视频）；"
+            "视频步会合并采集素材与 metadata.materials，再按需调用 I2V。"
         )
     if mode == "http":
         hints.append(
@@ -175,8 +175,9 @@ def _pipeline_env_hints(
 @router.get("/host-metrics")
 async def get_video_host_metrics() -> Dict[str, Any]:
     """
-    返回本机 CPU/内存与 NVIDIA GPU 利用率（供视频合成页实时展示）。
-    依赖系统 `nvidia-smi`；无 GPU 时 gpus 为空列表。
+    返回本机 CPU/内存与 NVIDIA GPU 指标（供视频合成页实时展示）。
+    依赖运行后端的机器上的 `nvidia-smi`；含显存占用、核心利用率、显存控制器利用率。
+    无 GPU 时 gpus 为空；若推理在其它主机/Docker 内，本机核心利用率可能长期接近 0。
     """
     from app.services.host_metrics import collect_host_metrics
 

@@ -91,7 +91,7 @@ def synthesize_video_task(
         if shots:
             if ltx2_t2v_available():
                 narr = narration_lines_for_shots(db, project_id, len(shots))
-                timeline, _shot_stats = asyncio.run(
+                timeline, _shot_stats, _board = asyncio.run(
                     build_ltx2_text_shot_timeline(
                         shots,
                         narr,

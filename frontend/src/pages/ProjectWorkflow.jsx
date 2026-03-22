@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Steps, Card, Button, message, Spin, Typography, Divider, Space, Tag, Alert, Progress, Collapse, Input, List, Popconfirm, Modal, Switch, Badge, Drawer } from 'antd'
+import { Steps, Card, Button, message, Spin, Typography, Divider, Space, Tag, Alert, Progress, Collapse, Input, List, Popconfirm, Modal, Switch, Badge, Drawer, Tooltip } from 'antd'
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -11,7 +11,8 @@ import {
   HistoryOutlined,
   RollbackOutlined,
   DiffOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  InfoCircleOutlined
 } from '@ant-design/icons'
 import {
   getProject,
@@ -26,6 +27,7 @@ import {
   clearProjectScriptHistory
 } from '../services/api'
 import AnimatedNumber from '../components/AnimatedNumber'
+import { LtxShotBoardPanel } from '../components/LtxShotBoardPanel'
 import ReactMarkdown from 'react-markdown'
 import { FinalVideoPreviewPlugin, VideoPipelineEnvPlugin, VideoGenerationMonitorPlugin } from '../plugins/workflow'
 
@@ -54,7 +56,7 @@ const stageLabelMap = {
   audio_synthesizing: '生成配音音频',
   audio_persisting: '保存音频结果',
   video_loading: '读取素材',
-  video_shot_timeline: '分镜时间轴（切素材/通义I2V）',
+  video_shot_timeline: '分镜时间轴（LTX / 裁切素材）',
   video_synthesizing: '合成视频',
   video_audio_mix: '挂载音频轨道',
   video_persisting: '保存视频结果',
@@ -101,6 +103,8 @@ function ProjectWorkflow() {
   const [runningStepKey, setRunningStepKey] = useState('')
   const [lastFailedStepKey, setLastFailedStepKey] = useState('')
   const [activeAnchor, setActiveAnchor] = useState('insight')
+  /** 快速跳转栏：最近点击的流程步骤（用于按钮高亮） */
+  const [quickJumpFocus, setQuickJumpFocus] = useState(null)
   const [scriptEditTip, setScriptEditTip] = useState('')
   const [compactMode, setCompactMode] = useState(() => {
     const cached = localStorage.getItem(COMPACT_MODE_KEY)
@@ -298,7 +302,7 @@ function ProjectWorkflow() {
           if (Date.now() - startedAt > 300000 && !longVideoWarned) {
             longVideoWarned = true
             message.warning({
-              content: '视频步骤仍在执行（通义 I2V / MoviePy 编码可能需数分钟），页面会持续自动刷新进度',
+              content: '视频步骤仍在执行（LTX 侧车 / Comfy 或 MoviePy 编码可能需较长时间），页面会持续自动刷新进度',
               key: `${messageKey}-longvideo`,
               duration: 8
             })
@@ -434,6 +438,23 @@ function ProjectWorkflow() {
     if (node && typeof node.scrollIntoView === 'function') {
       node.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
+  }
+
+  const scrollToWorkflowStep = (stepKey) => {
+    setQuickJumpFocus(stepKey)
+    setActiveAnchor('')
+    const node = document.getElementById(`step-card-${stepKey}`)
+    if (node && typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
+  const quickJumpStepDotClass = (stepKey) => {
+    const st = getStepStatus(stepKey)
+    if (st === 'error') return 'error'
+    if (st === 'process') return 'processing'
+    if (st === 'finish') return 'success'
+    return 'default'
   }
 
   const completedCount = workflowSteps.filter((step) => getStepStatus(step.key) === 'finish').length
@@ -1528,7 +1549,13 @@ function ProjectWorkflow() {
       const hasVideo = Boolean(videoPath)
       const shotStats = output.shot_timeline_stats || persistedVideo.shot_timeline_stats
       const synthesisMode = output.synthesis_mode || persistedVideo.synthesis_mode
-      const wanUsed = shotStats && typeof shotStats.wan_i2v === 'number' ? shotStats.wan_i2v : null
+      const wanUsed =
+        shotStats && typeof shotStats.wan_i2v === 'number' && shotStats.wan_i2v > 0
+          ? shotStats.wan_i2v
+          : null
+      const ltxBoardSaved = Array.isArray(output.ltx_shot_board) && output.ltx_shot_board.length
+        ? output.ltx_shot_board
+        : (Array.isArray(persistedVideo.ltx_shot_board) ? persistedVideo.ltx_shot_board : [])
       const withAudio = output.with_audio ?? persistedVideo.with_audio
       return (
         <div className="human-output-wrap">
@@ -1537,7 +1564,7 @@ function ProjectWorkflow() {
               <Tag color="blue">模式：{output.mode || '-'}</Tag>
               {synthesisMode ? <Tag color="cyan">时间轴：{synthesisMode}</Tag> : null}
               <Tag color="purple">素材数：{output.materials_count ?? 0}</Tag>
-              {wanUsed !== null ? <Tag color="magenta">通义I2V镜头：{wanUsed}</Tag> : null}
+              {wanUsed !== null ? <Tag color="magenta">Wan I2V 镜头：{wanUsed}</Tag> : null}
               <Tag color={withAudio ? 'success' : 'warning'}>
                 {withAudio ? '已挂载音轨' : '未挂载音轨'}
               </Tag>
@@ -1559,23 +1586,37 @@ function ProjectWorkflow() {
             </Space>
             {shotStats ? (
               <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-                分镜统计：素材 {shotStats.from_material ?? '-'} / 生图 {shotStats.generated ?? '-'} / LTX2 {shotStats.ltx2_t2v ?? '-'} / I2V {shotStats.wan_i2v ?? '-'} / 占位 {shotStats.placeholder ?? '-'}
+                分镜统计：素材 {shotStats.from_material ?? '-'} / 静图 {shotStats.generated ?? '-'} / LTX {shotStats.ltx2_t2v ?? '-'}
+                {typeof shotStats.wan_i2v === 'number' && shotStats.wan_i2v > 0 ? ` / Wan I2V ${shotStats.wan_i2v}` : ''} / 占位 {shotStats.placeholder ?? '-'}
+                {Array.isArray(shotStats?.diagnostics?.hints) && shotStats.diagnostics.hints.length > 0 ? (
+                  <Tooltip
+                    title={(
+                      <div>
+                        <div style={{ marginBottom: 6 }}>管线说明（非成片错误）</div>
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                          {shotStats.diagnostics.hints.map((h, i) => (
+                            <li key={i} style={{ marginBottom: 4 }}>{h}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  >
+                    <InfoCircleOutlined style={{ marginLeft: 8, cursor: 'help', color: 'rgba(0,0,0,0.45)' }} />
+                  </Tooltip>
+                ) : null}
               </Paragraph>
             ) : null}
-            {Array.isArray(shotStats?.diagnostics?.hints) && shotStats.diagnostics.hints.length > 0 ? (
-              <Alert
-                style={{ marginTop: 10 }}
-                type="warning"
-                showIcon
-                message="分镜未使用通义 I2V 或真实素材时的说明"
-                description={
-                  <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
-                    {shotStats.diagnostics.hints.map((h, i) => (
-                      <li key={i} style={{ marginBottom: 4 }}>{h}</li>
-                    ))}
-                  </ul>
-                }
-              />
+            {ltxBoardSaved.length > 0 ? (
+              <div style={{ marginTop: 14 }}>
+                <LtxShotBoardPanel
+                  title="LTX 每镜输入与输出（本次合成已保存）"
+                  ltxShots={ltxBoardSaved}
+                  ltxShotsCompleted={ltxBoardSaved.filter((s) => s.status === 'done' || s.status === 'placeholder').length}
+                  ltxShotsTotal={ltxBoardSaved.length}
+                  pollFast={false}
+                  showProgress
+                />
+              </div>
             ) : null}
             {videoPath ? (
               <div style={{ marginTop: 10 }}>
@@ -1643,6 +1684,7 @@ function ProjectWorkflow() {
   }
 
   const scrollToScriptSection = (sectionKey) => {
+    setQuickJumpFocus('script')
     if (sectionKey === 'history') {
       setActiveAnchor(sectionKey)
       loadScriptHistory()
@@ -1736,43 +1778,66 @@ function ProjectWorkflow() {
         ))}
       </Steps>
 
-      {showScriptAnchors ? (
-        <Card className="glass-card workflow-anchor-nav" size="small" style={{ marginBottom: 14 }}>
-          <Space wrap size={8}>
-            <Tag color="blue" style={{ marginInlineEnd: 4 }}>快速跳转</Tag>
-            <Button
-              size="small"
-              type={activeAnchor === 'insight' ? 'primary' : 'default'}
-              onClick={() => scrollToScriptSection('insight')}
-            >
-              <span className="anchor-btn-inner">
-                执行洞察
-                <span className={`anchor-indicator ${insightIndicatorClass}`} />
-              </span>
-            </Button>
-            <Button
-              size="small"
-              type={activeAnchor === 'output' ? 'primary' : 'default'}
-              onClick={() => scrollToScriptSection('output')}
-            >
-              <span className="anchor-btn-inner">
-                脚本输出
-                <span className={`anchor-indicator ${outputIndicatorClass}`} />
-              </span>
-            </Button>
-            <Button
-              size="small"
-              type={activeAnchor === 'history' ? 'primary' : 'default'}
-              onClick={() => scrollToScriptSection('history')}
-            >
-              <span className="anchor-btn-inner">
-                历史版本
-                <Badge size="small" count={scriptHistory.length} />
-              </span>
-            </Button>
-          </Space>
-        </Card>
-      ) : null}
+      <Card className="glass-card workflow-anchor-nav" size="small" style={{ marginBottom: 14 }}>
+        <Space wrap size={8} align="center">
+          <Tag color="blue" style={{ marginInlineEnd: 4 }}>快速跳转</Tag>
+          <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>流程步骤</Tag>
+          {workflowSteps.map((step, wIdx) => {
+            const isCurrent = workflowSteps[currentStep]?.key === step.key
+            const focused = quickJumpFocus === step.key
+            return (
+              <Button
+                key={`jump-${step.key}`}
+                size="small"
+                type={focused ? 'primary' : 'default'}
+                className={isCurrent && !focused ? 'workflow-step-jump-current' : undefined}
+                onClick={() => scrollToWorkflowStep(step.key)}
+              >
+                <span className="anchor-btn-inner">
+                  {wIdx + 1}. {step.title}
+                  <span className={`anchor-indicator ${quickJumpStepDotClass(step.key)}`} />
+                </span>
+              </Button>
+            )
+          })}
+          {showScriptAnchors ? (
+            <>
+              <Divider type="vertical" style={{ height: 28, margin: '0 4px' }} />
+              <Tag color="purple" style={{ marginInlineEnd: 0 }}>脚本卡片内</Tag>
+              <Button
+                size="small"
+                type={quickJumpFocus === 'script' && activeAnchor === 'insight' ? 'primary' : 'default'}
+                onClick={() => scrollToScriptSection('insight')}
+              >
+                <span className="anchor-btn-inner">
+                  执行洞察
+                  <span className={`anchor-indicator ${insightIndicatorClass}`} />
+                </span>
+              </Button>
+              <Button
+                size="small"
+                type={quickJumpFocus === 'script' && activeAnchor === 'output' ? 'primary' : 'default'}
+                onClick={() => scrollToScriptSection('output')}
+              >
+                <span className="anchor-btn-inner">
+                  脚本输出
+                  <span className={`anchor-indicator ${outputIndicatorClass}`} />
+                </span>
+              </Button>
+              <Button
+                size="small"
+                type={quickJumpFocus === 'script' && activeAnchor === 'history' ? 'primary' : 'default'}
+                onClick={() => scrollToScriptSection('history')}
+              >
+                <span className="anchor-btn-inner">
+                  历史版本
+                  <Badge size="small" count={scriptHistory.length} />
+                </span>
+              </Button>
+            </>
+          ) : null}
+        </Space>
+      </Card>
 
       {workflowSteps.map((step, index) => (
         (() => {
@@ -1901,12 +1966,25 @@ function ProjectWorkflow() {
                     </span>
                   )}
                   description={(
-                    <span>
-                      当前子阶段已进行 <strong>{currentStageSeconds ?? 0}s</strong>
-                      ｜ 本步累计 <strong>{displayTotalSeconds ?? '-'}</strong>s（本地时钟 + 服务端）
-                      ｜ 预计剩余 <strong>{etaSeconds ?? '-'}</strong>s
-                      {step.key === 'video' ? ' ｜ 视频步约 750ms 拉取一次进度' : ''}
-                    </span>
+                    <Space align="start" wrap size={4}>
+                      <span>
+                        子阶段 <strong>{currentStageSeconds ?? 0}s</strong>
+                        ｜ 累计 <strong>{displayTotalSeconds ?? '-'}</strong>s
+                        ｜ 剩余约 <strong>{etaSeconds ?? '-'}</strong>s
+                        {step.key === 'video' ? ' ｜ ~750ms 刷新' : ''}
+                      </span>
+                      <Tooltip
+                        title={(
+                          <span>
+                            当前子阶段已进行 {currentStageSeconds ?? 0}s；本步累计 {displayTotalSeconds ?? '-'}s（本地时钟 + 服务端 started_at）；
+                            预计剩余 {etaSeconds ?? '-'}s（按阶段历史估算）。
+                            {step.key === 'video' ? ' 视频步会轮询项目状态以更新 LTX 分镜看板与日志。' : ''}
+                          </span>
+                        )}
+                      >
+                        <InfoCircleOutlined style={{ color: 'rgba(0,0,0,0.45)', cursor: 'help' }} />
+                      </Tooltip>
+                    </Space>
                   )}
                 />
               ) : null}
@@ -1926,6 +2004,9 @@ function ProjectWorkflow() {
                     <VideoGenerationMonitorPlugin
                       activityLog={Array.isArray(progressMeta.activity_log) ? progressMeta.activity_log : []}
                       pollFast={inFlight}
+                      ltxShots={Array.isArray(progressMeta.ltx_shots) ? progressMeta.ltx_shots : []}
+                      ltxShotsCompleted={Number(progressMeta.ltx_shots_completed) || 0}
+                      ltxShotsTotal={Number(progressMeta.ltx_shots_total) || 0}
                     />
                   </Space>
                 </div>

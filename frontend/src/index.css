@@ -40,9 +40,26 @@ code {
   letter-spacing: 0.2px;
 }
 
+.app-nav-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-nav-scroll .ant-menu-horizontal {
+  border-bottom: none !important;
+  flex-wrap: nowrap;
+}
+
 .app-nav-menu {
   background: transparent !important;
   border-bottom: none !important;
+}
+
+/* 顶栏下拉：外链可读性 */
+.app-nav-submenu-popup.ant-menu-submenu-popup .ant-menu {
+  min-width: 220px;
 }
 
 .app-nav-menu .ant-menu-item {
@@ -329,6 +346,12 @@ code {
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
 }
 
+/* 快速跳转：当前流程推荐步骤（未手动高亮其它按钮时） */
+.workflow-step-jump-current.ant-btn-default {
+  border-color: #91caff;
+  color: #0958d9;
+}
+
 .workflow-steps .ant-steps-item-title {
   font-weight: 600;
 }
@@ -452,6 +475,11 @@ code {
   border-color: rgba(129, 140, 248, 0.36) !important;
   background: linear-gradient(120deg, rgba(23, 29, 49, 0.94), rgba(17, 24, 39, 0.9)) !important;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+}
+
+.app-shell.theme-dark .workflow-step-jump-current.ant-btn-default {
+  border-color: rgba(129, 140, 248, 0.55) !important;
+  color: #c4b5fd !important;
 }
 
 .app-shell.theme-dark .anchor-indicator {

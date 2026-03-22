@@ -1,6 +1,14 @@
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Breadcrumb, Typography, Grid, Switch } from 'antd'
-import { HomeOutlined, ProjectOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
+import {
+  HomeOutlined,
+  ProjectOutlined,
+  MoonOutlined,
+  SunOutlined,
+  BookOutlined,
+  FileTextOutlined,
+  ApiOutlined
+} from '@ant-design/icons'
 import Home from './pages/Home'
 import Projects from './pages/Projects'
 import ProjectWorkflow from './pages/ProjectWorkflow'
@@ -20,6 +28,13 @@ function App() {
   const selectedKey = location.pathname.startsWith('/projects') ? '/projects' : '/'
   const pathSegments = location.pathname.split('/').filter(Boolean)
   const isProjectDetail = location.pathname.startsWith('/projects/')
+  const apiOrigin =
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_ORIGIN) ||
+    (typeof window !== 'undefined'
+      ? `${window.location.protocol}//${window.location.hostname}:8000`
+      : 'http://127.0.0.1:8000')
+  const repoDocs =
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_REPO_DOCS_URL) || ''
 
   const contentMaxWidth = (() => {
     if (screens.xxl) return isProjectDetail ? 1880 : 1760
@@ -31,21 +46,77 @@ function App() {
 
   const contentPadding = screens.md ? '20px 24px' : '16px 12px'
 
-  const breadcrumbItems = [{ title: <span style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>首页</span> }]
+  const breadcrumbItems = [
+    {
+      title: (
+        <span style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
+          工作台
+        </span>
+      )
+    }
+  ]
   if (pathSegments[0] === 'projects') {
     breadcrumbItems.push({
-      title: <span style={{ cursor: 'pointer' }} onClick={() => navigate('/projects')}>项目列表</span>
+      title: (
+        <span style={{ cursor: 'pointer' }} onClick={() => navigate('/projects')}>
+          项目列表
+        </span>
+      )
     })
     if (pathSegments[1]) {
+      const pid = pathSegments[1]
+      const short = pid.length > 12 ? `${pid.slice(0, 12)}…` : pid
       breadcrumbItems.push({
         title: (
-          <Text type="secondary">
-            项目详情（{pathSegments[1].slice(0, 8)}...）
+          <Text type="secondary" title={pid}>
+            项目工作流 · {short}
           </Text>
         )
       })
     }
   }
+
+  const navMenuItems = [
+    { key: '/', icon: <HomeOutlined />, label: '工作台' },
+    { key: '/projects', icon: <ProjectOutlined />, label: '项目与流水线' },
+    {
+      key: 'docs-hub',
+      icon: <BookOutlined />,
+      label: '文档与 API',
+      children: [
+        {
+          key: 'api-swagger',
+          icon: <ApiOutlined />,
+          label: (
+            <a href={`${apiOrigin}/docs`} target="_blank" rel="noopener noreferrer">
+              Swagger UI（交互调试）
+            </a>
+          )
+        },
+        {
+          key: 'api-redoc',
+          icon: <FileTextOutlined />,
+          label: (
+            <a href={`${apiOrigin}/redoc`} target="_blank" rel="noopener noreferrer">
+              ReDoc（只读文档）
+            </a>
+          )
+        },
+        ...(repoDocs
+          ? [
+              {
+                key: 'repo-docs',
+                label: (
+                  <a href={repoDocs} target="_blank" rel="noopener noreferrer">
+                    仓库文档（README / docs）
+                  </a>
+                )
+              }
+            ]
+          : [])
+      ]
+    }
+  ]
 
   return (
     <Layout
@@ -67,18 +138,22 @@ function App() {
         <div className="app-brand">
           自媒体视频自动化系统
         </div>
-        <Menu
-          className="app-nav-menu"
-          theme="dark"
-          mode="horizontal"
-          selectedKeys={[selectedKey]}
-          style={{ minWidth: 240 }}
-          items={[
-            { key: '/', icon: <HomeOutlined />, label: '首页' },
-            { key: '/projects', icon: <ProjectOutlined />, label: '项目列表' }
-          ]}
-          onClick={({ key }) => navigate(key)}
-        />
+        <div className="app-nav-scroll">
+          <Menu
+            className="app-nav-menu"
+            theme="dark"
+            mode="horizontal"
+            triggerSubMenuAction="click"
+            popupClassName="app-nav-submenu-popup"
+            selectedKeys={[selectedKey]}
+            items={navMenuItems}
+            onClick={({ key }) => {
+              if (typeof key === 'string' && key.startsWith('/')) {
+                navigate(key)
+              }
+            }}
+          />
+        </div>
         <div className="theme-switch-wrap">
           <Switch
             checked={isDark}
