@@ -2,6 +2,7 @@
 """Video Synthesis Service with MoviePy"""
 import os
 import logging
+import threading
 from typing import List, Dict, Any, Optional, Callable, Union
 from pathlib import Path
 # MoviePy 2.x imports
@@ -173,19 +174,36 @@ class VideoSynthesizer:
         # Concatenate all clips
         final_video = concatenate_videoclips(clips, method="compose")
 
-        # Update progress
+        # Update progress — MoviePy 写盘可能极慢，用后台心跳刷新上层状态
         if progress_callback:
-            progress_callback(85, "Writing video file...")
+            progress_callback(85, "Writing video file (MoviePy 编码，可能需数分钟)…")
 
-        # Write output video (Phase 1: no audio, 24 fps)
-        final_video.write_videofile(
-            str(output_path),
-            fps=24,
-            codec="libx264",
-            audio=False,  # Phase 1: No audio
-            verbose=False,
-            logger=None
-        )
+        hb_stop = threading.Event()
+
+        def _encode_heartbeat():
+            beat = 0
+            while not hb_stop.wait(4.0):
+                beat += 1
+                if progress_callback:
+                    progress_callback(
+                        min(88, 85 + (beat % 4)),
+                        "仍在写入 MP4（编解码/磁盘 IO，属正常现象）…",
+                    )
+
+        hb_thread = threading.Thread(target=_encode_heartbeat, daemon=True)
+        hb_thread.start()
+        try:
+            # Write output video (Phase 1: no audio, 24 fps)
+            final_video.write_videofile(
+                str(output_path),
+                fps=24,
+                codec="libx264",
+                audio=False,  # Phase 1: No audio
+                logger=None
+            )
+        finally:
+            hb_stop.set()
+            hb_thread.join(timeout=2.0)
 
         # Clean up clips
         for clip in clips:
@@ -232,7 +250,6 @@ class VideoSynthesizer:
             bitrate="8000k",
             audio_codec="aac",
             audio_bitrate="192k",
-            verbose=False,
             logger=None
         )
 
@@ -453,7 +470,7 @@ class VideoSynthesizer:
                         audio = audio.loop(duration=final_video.duration)
                     elif audio.duration > final_video.duration:
                         audio = audio.subclip(0, final_video.duration)
-                    final_video = final_video.set_audio(audio)
+                    final_video = final_video.with_audio(audio)
                 except Exception as e:
                     logger.warning(f"Failed to add audio: {e}")
 
@@ -481,17 +498,33 @@ class VideoSynthesizer:
                         logger.warning(f"Failed to composite effects: {e}")
 
             if progress_callback:
-                progress_callback(85, "Writing video file...")
+                progress_callback(85, "Writing video file (MoviePy 编码，可能需数分钟)…")
 
-            # Write output video
-            final_video.write_videofile(
-                str(output_path),
-                fps=fps,
-                codec="libx264",
-                audio_codec="aac",
-                verbose=False,
-                logger=None
-            )
+            hb_stop = threading.Event()
+
+            def _encode_heartbeat2():
+                beat = 0
+                while not hb_stop.wait(4.0):
+                    beat += 1
+                    if progress_callback:
+                        progress_callback(
+                            min(88, 85 + (beat % 4)),
+                            "仍在写入 MP4（编解码/磁盘 IO，属正常现象）…",
+                        )
+
+            hb_thread = threading.Thread(target=_encode_heartbeat2, daemon=True)
+            hb_thread.start()
+            try:
+                final_video.write_videofile(
+                    str(output_path),
+                    fps=fps,
+                    codec="libx264",
+                    audio_codec="aac",
+                    logger=None
+                )
+            finally:
+                hb_stop.set()
+                hb_thread.join(timeout=2.0)
 
         finally:
             # Clean up all clips to prevent resource leaks

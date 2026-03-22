@@ -9,7 +9,7 @@
 - 🔥 **话题监控** - 自动抓取微博、知乎等平台热门话题
 - 📝 **脚本生成** - AI驱动的脚本自动生成（支持Claude/GPT/GLM）
 - 🖼️ **素材收集** - 自动收集图片、视频、音频素材
-- 🎬 **视频合成** - 自动合成视频，支持字幕、特效；可选接入本地 **通义万相 Wan2.1 图生视频**（见 [`docs/WAN2.1_LOCAL.md`](docs/WAN2.1_LOCAL.md)）
+- 🎬 **视频合成** - 自动合成视频，支持字幕、特效；可选接入本地 **通义万相 Wan2.1 图生视频**（见 [`docs/WAN2.1_LOCAL.md`](docs/WAN2.1_LOCAL.md)）；**LTX-2 音画一体模型**本地部署见 [`docs/LTX2_LOCAL.md`](docs/LTX2_LOCAL.md)
 - 🔊 **语音合成** - 多种TTS引擎（Azure/ElevenLabs）
 - 📤 **多平台导出** - 一键导出到抖音、B站、小红书等
 
@@ -121,6 +121,10 @@ chmod +x scripts/dev.sh
 ```
 
 并将 `backend/.env.wan.generated` 合并进 `backend/.env`。
+
+#### 镜像与代理（可选）
+
+若 **GitHub / Hugging Face** 访问不稳定，见 **[`docs/MIRROR_SOURCES.md`](docs/MIRROR_SOURCES.md)**（如 `HF_ENDPOINT`、`LTX2_GITHUB_MIRROR`、`git` 代理等）。
 
 #### 常用命令
 

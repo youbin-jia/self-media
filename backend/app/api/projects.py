@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from moviepy import AudioFileClip, VideoFileClip, concatenate_audioclips
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.project import Project
 from app.models.script import Script
 from app.models.script_history import ScriptHistory
@@ -28,10 +28,9 @@ from app.services.visual_planner import VisualPlanner
 from app.services.tts import tts_manager
 from app.services.video_synthesizer import VideoSynthesizer
 from app.services.video_shot_timeline import (
-    normalize_materials_for_video,
+    load_project_materials_for_video,
     visual_shots_from_project_meta,
     build_visual_shot_timeline,
-    ai_image_generation_available,
 )
 from app.config import settings
 
@@ -211,7 +210,8 @@ def _attach_audio_to_video(video_path: Path, audio_path: Path, output_path: Path
     try:
         if audio_clip.duration > video_clip.duration:
             audio_clip = audio_clip.subclip(0, video_clip.duration)
-        mixed = video_clip.set_audio(audio_clip)
+        # MoviePy 2.x：使用 with_audio 替代已移除的 set_audio
+        mixed = video_clip.with_audio(audio_clip)
         mixed.write_videofile(
             str(output_path),
             fps=int(video_clip.fps or 24),
@@ -330,6 +330,70 @@ def _set_step_progress(
     project.current_step = step_name
     project.project_metadata = metadata
     db.commit()
+
+
+def _video_synth_progress_callback(project_id: str, step_name: str):
+    """MoviePy / 时间轴处理期间节流写入步骤进度（独立 Session，避免阻塞主请求会话）。"""
+    last_emit = [0.0, -1]
+
+    def cb(raw_percent: int, msg: str) -> None:
+        now = time.monotonic()
+        if now - last_emit[0] < 1.5 and abs(int(raw_percent) - last_emit[1]) < 6:
+            return
+        last_emit[0] = now
+        last_emit[1] = int(raw_percent)
+        try:
+            rp = float(raw_percent)
+            mapped = int(max(56, min(91, 56 + (rp - 25) * (35.0 / 65.0))))
+        except Exception:
+            mapped = 72
+        sdb = SessionLocal()
+        try:
+            proj = sdb.query(Project).filter(Project.id == project_id).first()
+            if not proj:
+                return
+            meta = dict(proj.project_metadata or {})
+            _set_step_progress(
+                proj,
+                meta,
+                step_name,
+                sdb,
+                status="processing",
+                percent=mapped,
+                stage="video_synthesizing",
+                message=(msg or "视频合成中")[:220],
+            )
+        finally:
+            sdb.close()
+
+    return cb
+
+
+def _video_shot_timeline_progress_factory(project_id: str, step_name: str):
+    """分镜时间轴（含通义 I2V）每镜回调。"""
+
+    async def on_shot(idx: int, total: int, msg: str) -> None:
+        sdb = SessionLocal()
+        try:
+            proj = sdb.query(Project).filter(Project.id == project_id).first()
+            if not proj:
+                return
+            meta = dict(proj.project_metadata or {})
+            pct = 20 + int((idx / max(total, 1)) * 28)
+            _set_step_progress(
+                proj,
+                meta,
+                step_name,
+                sdb,
+                status="processing",
+                percent=min(48, max(18, pct)),
+                stage="video_shot_timeline",
+                message=msg[:220],
+            )
+        finally:
+            sdb.close()
+
+    return on_shot
 
 
 def _build_review_segments(full_script: str, raw_segments: Optional[list]) -> List[ScriptSegment]:
@@ -1178,7 +1242,7 @@ async def execute_project_step(
             )
 
             project_meta = dict(project.project_metadata or {})
-            materials = normalize_materials_for_video(project_meta.get("materials"))
+            materials = load_project_materials_for_video(db, project_id, project_meta)
             shots = visual_shots_from_project_meta(project_meta)
             shot_stats: Optional[Dict[str, int]] = None
             synthesis_mode = "materials_only"
@@ -1195,8 +1259,12 @@ async def execute_project_step(
                     stage="video_shot_timeline",
                     message="按视觉规划组装分镜时间轴（切素材 / 生图）"
                 )
+                shot_cb = _video_shot_timeline_progress_factory(project_id, step_name)
                 timeline, shot_stats = await build_visual_shot_timeline(
-                    shots, materials, project_id=project_id
+                    shots,
+                    materials,
+                    project_id=project_id,
+                    on_shot_progress=shot_cb,
                 )
                 synthesis_mode = "visual_shots"
             elif not materials:
@@ -1214,9 +1282,11 @@ async def execute_project_step(
                 stage="video_synthesizing",
                 message="正在合成基础视频"
             )
+            synth_progress = _video_synth_progress_callback(project_id, step_name)
             base_video_path = Path(synthesizer.synthesize(
                 project_id=project_id,
                 materials=materials,
+                progress_callback=synth_progress,
                 timeline=timeline
             )).resolve()
             if not base_video_path.exists():

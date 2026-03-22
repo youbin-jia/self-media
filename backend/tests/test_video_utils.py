@@ -792,7 +792,6 @@ class TestVideoSynthesizerEffectsIntegration:
             fps=24,
             codec="libx264",
             audio=False,
-            verbose=False,
             logger=None
         )
         test_clip.close()
@@ -836,7 +835,6 @@ class TestVideoSynthesizerEffectsIntegration:
             fps=24,
             codec="libx264",
             audio=False,
-            verbose=False,
             logger=None
         )
         test_clip.close()

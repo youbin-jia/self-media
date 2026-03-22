@@ -12,7 +12,7 @@ from app.database import SessionLocal
 from app.models.project import Project
 from app.services.video_synthesizer import VideoSynthesizer
 from app.services.video_shot_timeline import (
-    normalize_materials_for_video,
+    load_project_materials_for_video,
     visual_shots_from_project_meta,
     build_visual_shot_timeline,
 )
@@ -71,7 +71,7 @@ def synthesize_video_task(
 
         # Get materials / visual shots from project metadata
         metadata = dict(project.project_metadata or {})
-        materials = normalize_materials_for_video(metadata.get("materials"))
+        materials = load_project_materials_for_video(db, project_id, metadata)
         shots = visual_shots_from_project_meta(metadata)
         timeline: Optional[List[Dict[str, Any]]] = None
         synth_materials = materials

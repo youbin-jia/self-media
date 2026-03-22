@@ -28,10 +28,13 @@ export const clearProjectScriptHistory = (projectId) =>
 export const aiReviseProjectScript = (projectId, data) =>
   api.post(`/scripts/project/${projectId}/ai-revise`, data, { timeout: 180000 })
 
-// Workflow steps
-export const executeStep = (projectId, stepName, data) =>
-  api.post(`/projects/${projectId}/steps/${stepName}/execute`, data, { timeout: 180000 })
-export const regenerateStep = (projectId, stepName, data) =>
-  api.post(`/projects/${projectId}/steps/${stepName}/regenerate`, data, { timeout: 180000 })
+// Workflow steps（video 含本地通义 I2V 时可能极慢，由调用方加大 timeout）
+export const executeStep = (projectId, stepName, data, axiosConfig = {}) =>
+  api.post(`/projects/${projectId}/steps/${stepName}/execute`, data, { timeout: 180000, ...axiosConfig })
+export const regenerateStep = (projectId, stepName, data, axiosConfig = {}) =>
+  api.post(`/projects/${projectId}/steps/${stepName}/regenerate`, data, { timeout: 180000, ...axiosConfig })
+
+/** 视频管线 / 通义万相 Wan I2V 环境（不含密钥） */
+export const getVideoPipelineEnv = () => api.get('/video/pipeline-env')
 
 export default api

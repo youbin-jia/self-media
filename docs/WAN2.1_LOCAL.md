@@ -202,6 +202,14 @@ python generate.py --task i2v-14B --size 1280*720 \
 
 ---
 
+## API 与前端自检
+
+- **HTTP**：`GET /api/video/pipeline-env` — 返回 `WAN_I2V_*` 是否就绪、权重目录是否有文件、`hints` 文本提示（不含密钥）。
+- **命令行**：`./scripts/check_video_pipeline_env.sh`（默认 `http://127.0.0.1:8000`，可设 `VIDEO_API_BASE`）。
+- **前端**：工作流「视频合成」步骤顶部展示 **视频生成环境** 卡片；有成片时 **成片预览（插件）** 内嵌播放。
+
+---
+
 ## 相关链接
 
 - [Wan-Video/Wan2.1](https://github.com/Wan-Video/Wan2.1)

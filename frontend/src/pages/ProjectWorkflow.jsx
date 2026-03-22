@@ -27,6 +27,7 @@ import {
 } from '../services/api'
 import AnimatedNumber from '../components/AnimatedNumber'
 import ReactMarkdown from 'react-markdown'
+import { FinalVideoPreviewPlugin, VideoPipelineEnvPlugin } from '../plugins/workflow'
 
 const { Title, Paragraph } = Typography
 
@@ -53,6 +54,7 @@ const stageLabelMap = {
   audio_synthesizing: '生成配音音频',
   audio_persisting: '保存音频结果',
   video_loading: '读取素材',
+  video_shot_timeline: '分镜时间轴（切素材/通义I2V）',
   video_synthesizing: '合成视频',
   video_audio_mix: '挂载音频轨道',
   video_persisting: '保存视频结果',
@@ -111,6 +113,13 @@ function ProjectWorkflow() {
     fullScriptDiff: []
   })
   const refreshTimerRef = useRef(null)
+  /** 执行中每秒触发重渲染，用于本步已运行时长（与轮询无关的本地时钟） */
+  const [progressClock, setProgressClock] = useState(0)
+  useEffect(() => {
+    if (!runningStepKey) return undefined
+    const t = window.setInterval(() => setProgressClock((c) => c + 1), 1000)
+    return () => window.clearInterval(t)
+  }, [runningStepKey])
 
   useEffect(() => {
     loadProject()
@@ -211,11 +220,12 @@ function ProjectWorkflow() {
 
   const waitForStepSettled = async (stepName, timeoutMs = 180000) => {
     const start = Date.now()
+    const pollMs = stepName === 'video' ? 750 : 1200
     while (Date.now() - start < timeoutMs) {
       const data = await loadProject(true)
       const current = data?.steps?.[stepName] || data?.metadata?.steps?.[stepName]
       if (current?.status && current.status !== 'processing') return current
-      await sleep(1200)
+      await sleep(pollMs)
     }
     return null
   }
@@ -248,9 +258,10 @@ function ProjectWorkflow() {
 
     // Start polling immediately and keep polling while backend task runs.
     await loadProject(true)
+    const pollMs = stepName === 'video' ? 750 : 1200
     refreshTimerRef.current = setInterval(() => {
       loadProject(true)
-    }, 1200)
+    }, pollMs)
 
     const messageKey = mode === 'execute' ? 'execute' : 'regenerate'
     const loadingText = mode === 'execute' ? '执行中...' : '重新生成中...'
@@ -262,6 +273,8 @@ function ProjectWorkflow() {
       handedOffToBackgroundSync = true
       if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
       const startedAt = Date.now()
+      const bgPollMs = stepName === 'video' ? 750 : 1200
+      let longVideoWarned = false
       refreshTimerRef.current = setInterval(async () => {
         const data = await loadProject(true)
         const current = data?.steps?.[stepName] || data?.metadata?.steps?.[stepName]
@@ -281,13 +294,24 @@ function ProjectWorkflow() {
           await loadScriptHistory()
           return
         }
+        if (stepName === 'video') {
+          if (Date.now() - startedAt > 300000 && !longVideoWarned) {
+            longVideoWarned = true
+            message.warning({
+              content: '视频步骤仍在执行（通义 I2V / MoviePy 编码可能需数分钟），页面会持续自动刷新进度',
+              key: `${messageKey}-longvideo`,
+              duration: 8
+            })
+          }
+          return
+        }
         if (Date.now() - startedAt > 180000) {
           clearInterval(refreshTimerRef.current)
           refreshTimerRef.current = null
           setRunningStepKey('')
           message.warning({ content: '后台处理时间较长，请稍后刷新查看最终状态', key: messageKey })
         }
-      }, 1200)
+      }, bgPollMs)
     }
 
     try {
@@ -298,13 +322,14 @@ function ProjectWorkflow() {
         if (fullScriptPromptDraft?.trim()) payload.full_script_prompt = fullScriptPromptDraft.trim()
       }
 
+      const longVideo = stepName === 'video' ? { timeout: 7200000 } : {}
       if (mode === 'execute') {
-        await executeStep(id, stepName, stepName === 'script' ? payload : undefined)
+        await executeStep(id, stepName, stepName === 'script' ? payload : undefined, longVideo)
       } else {
-        await regenerateStep(id, stepName, stepName === 'script' ? payload : undefined)
+        await regenerateStep(id, stepName, stepName === 'script' ? payload : undefined, longVideo)
       }
       setLastFailedStepKey((prev) => (prev === stepName ? '' : prev))
-      const settled = await waitForStepSettled(stepName, 30000)
+      const settled = await waitForStepSettled(stepName, stepName === 'video' ? 120000 : 30000)
       const settledStatus = settled?.status
       if (!settled) {
         message.loading({ content: '后台仍在处理中，继续同步状态...', key: messageKey })
@@ -322,7 +347,7 @@ function ProjectWorkflow() {
       if (timeoutLike) {
         message.loading({ content: '请求超时，后台可能仍在处理中，正在继续同步状态...', key: messageKey })
       }
-      const settled = await waitForStepSettled(stepName, 180000)
+      const settled = await waitForStepSettled(stepName, stepName === 'video' ? 300000 : 180000)
       if (!settled) {
         message.loading({ content: '请求失败，但后台可能仍在处理中，继续同步状态...', key: messageKey })
         startBackgroundSyncUntilSettled()
@@ -1490,20 +1515,36 @@ function ProjectWorkflow() {
     }
 
     if (stepKey === 'video') {
-      const videoInfo = output.video_info || {}
+      const meta = project?.metadata || {}
+      const persistedVideo = meta.video && typeof meta.video === 'object' ? meta.video : {}
+      const videoInfoRaw = output.video_info || {}
+      const videoInfo = {
+        duration: videoInfoRaw.duration ?? persistedVideo.duration_sec,
+        width: videoInfoRaw.width ?? persistedVideo.width,
+        height: videoInfoRaw.height ?? persistedVideo.height,
+        fps: videoInfoRaw.fps ?? persistedVideo.fps
+      }
+      const videoPath = output.video_path || meta.video_path || persistedVideo.path
+      const hasVideo = Boolean(videoPath)
+      const shotStats = output.shot_timeline_stats || persistedVideo.shot_timeline_stats
+      const synthesisMode = output.synthesis_mode || persistedVideo.synthesis_mode
+      const wanUsed = shotStats && typeof shotStats.wan_i2v === 'number' ? shotStats.wan_i2v : null
+      const withAudio = output.with_audio ?? persistedVideo.with_audio
       return (
         <div className="human-output-wrap">
           <Card size="small" className="human-output-card" title="视频合成结果">
             <Space wrap>
               <Tag color="blue">模式：{output.mode || '-'}</Tag>
+              {synthesisMode ? <Tag color="cyan">时间轴：{synthesisMode}</Tag> : null}
               <Tag color="purple">素材数：{output.materials_count ?? 0}</Tag>
-              <Tag color={output.with_audio ? 'success' : 'warning'}>
-                {output.with_audio ? '已挂载音轨' : '未挂载音轨'}
+              {wanUsed !== null ? <Tag color="magenta">通义I2V镜头：{wanUsed}</Tag> : null}
+              <Tag color={withAudio ? 'success' : 'warning'}>
+                {withAudio ? '已挂载音轨' : '未挂载音轨'}
               </Tag>
               {videoInfo.duration ? <Tag color="geekblue">时长：{formatScore(videoInfo.duration)}s</Tag> : null}
               {(videoInfo.width && videoInfo.height) ? <Tag>{videoInfo.width}x{videoInfo.height}</Tag> : null}
               {videoInfo.fps ? <Tag>{formatScore(videoInfo.fps)} fps</Tag> : null}
-              {output.video_path ? (
+              {videoPath ? (
                 <Button
                   size="small"
                   type="primary"
@@ -1516,11 +1557,31 @@ function ProjectWorkflow() {
                 </Button>
               ) : null}
             </Space>
-            {output.video_path ? (
+            {shotStats ? (
+              <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
+                分镜统计：素材 {shotStats.from_material ?? '-'} / 生图 {shotStats.generated ?? '-'} / I2V {shotStats.wan_i2v ?? '-'} / 占位 {shotStats.placeholder ?? '-'}
+              </Paragraph>
+            ) : null}
+            {Array.isArray(shotStats?.diagnostics?.hints) && shotStats.diagnostics.hints.length > 0 ? (
+              <Alert
+                style={{ marginTop: 10 }}
+                type="warning"
+                showIcon
+                message="分镜未使用通义 I2V 或真实素材时的说明"
+                description={
+                  <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
+                    {shotStats.diagnostics.hints.map((h, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>{h}</li>
+                    ))}
+                  </ul>
+                }
+              />
+            ) : null}
+            {videoPath ? (
               <div style={{ marginTop: 10 }}>
                 <Paragraph strong style={{ marginBottom: 6 }}>视频文件（绝对路径）</Paragraph>
                 <Typography.Text
-                  copyable={{ text: String(output.video_path) }}
+                  copyable={{ text: String(videoPath) }}
                   style={{
                     display: 'block',
                     padding: '10px 12px',
@@ -1531,7 +1592,7 @@ function ProjectWorkflow() {
                     wordBreak: 'break-all'
                   }}
                 >
-                  {String(output.video_path)}
+                  {String(videoPath)}
                 </Typography.Text>
               </div>
             ) : null}
@@ -1539,6 +1600,9 @@ function ProjectWorkflow() {
               <Alert style={{ marginTop: 10 }} type="success" showIcon message={output.message} />
             ) : null}
           </Card>
+          <div style={{ marginTop: 12 }}>
+            <FinalVideoPreviewPlugin projectId={id} hasVideo={hasVideo} title="成片预览（插件）" />
+          </div>
         </div>
       )
     }
@@ -1723,7 +1787,15 @@ function ProjectWorkflow() {
             progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.entered_at : null,
             progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.exited_at : null
           )
+          const wallStepSeconds =
+            inFlight && progressMeta.started_at
+              ? getElapsedSeconds(progressMeta.started_at, null)
+              : null
+          void progressClock
+          const displayTotalSeconds = wallStepSeconds != null ? wallStepSeconds : totalSeconds
           const etaSeconds = getEtaSeconds(progressMeta)
+          const serverPercent = Number(progressMeta.percent)
+          const showServerPct = Number.isFinite(serverPercent) && inFlight
           const stageTimeline = Array.isArray(progressMeta.timeline) ? progressMeta.timeline : []
           const llmCalls = Array.isArray(progressMeta.llm_calls) ? progressMeta.llm_calls : []
           const llmCallByStage = llmCalls.reduce((acc, item) => {
@@ -1811,7 +1883,8 @@ function ProjectWorkflow() {
                 percent={statusMeta.progress}
                 size="small"
                 status={statusMeta.progress === 100 ? 'success' : statusMeta.progress > 0 ? 'active' : 'normal'}
-                showInfo={false}
+                showInfo
+                format={(pct) => `${pct}%`}
                 style={{ marginBottom: 12 }}
                 className="step-progress-bar"
               />
@@ -1820,8 +1893,21 @@ function ProjectWorkflow() {
                   type="info"
                   showIcon
                   style={{ marginBottom: 12 }}
-                  message={`${stageLabel} · ${progressText}`}
-                  description={`当前阶段耗时 ${currentStageSeconds ?? 0}s ｜ 总耗时 ${totalSeconds ?? 0}s ｜ 预计剩余 ${etaSeconds ?? '-'}s（自动刷新）`}
+                  message={(
+                    <span>
+                      <strong>{stageLabel}</strong>
+                      {showServerPct ? <Tag color="processing" style={{ marginLeft: 8 }}>后端 {serverPercent}%</Tag> : null}
+                      <span style={{ marginLeft: 8 }}>{progressText || '处理中…'}</span>
+                    </span>
+                  )}
+                  description={(
+                    <span>
+                      当前子阶段已进行 <strong>{currentStageSeconds ?? 0}s</strong>
+                      ｜ 本步累计 <strong>{displayTotalSeconds ?? '-'}</strong>s（本地时钟 + 服务端）
+                      ｜ 预计剩余 <strong>{etaSeconds ?? '-'}</strong>s
+                      {step.key === 'video' ? ' ｜ 视频步约 750ms 拉取一次进度' : ''}
+                    </span>
+                  )}
                 />
               ) : null}
               {failedHighlight && !inFlight ? (
@@ -1833,13 +1919,19 @@ function ProjectWorkflow() {
                   description={failureReason || '已自动定位并高亮，请检查模型配置、网络或输入后重试。'}
                 />
               ) : null}
+              {step.key === 'video' ? (
+                <div className="human-output-wrap" style={{ marginBottom: 12 }}>
+                  <VideoPipelineEnvPlugin />
+                </div>
+              ) : null}
               {stepData ? (
                 <div>
                   <Paragraph className="step-status-line">
                     <strong>状态：</strong>
                     <Tag color={statusMeta.tagColor}>{stepData.status}</Tag>
                     {progressMeta.stage ? <Tag color="blue">阶段：{stageLabel}</Tag> : null}
-                    {totalSeconds !== null ? <Tag color="geekblue">总耗时：{totalSeconds}s</Tag> : null}
+                    {showServerPct ? <Tag color="purple">进度：{serverPercent}%</Tag> : null}
+                    {displayTotalSeconds != null ? <Tag color="geekblue">本步累计：{displayTotalSeconds}s</Tag> : null}
                     {inFlight && etaSeconds !== null ? <Tag color="cyan">预计剩余：{etaSeconds}s</Tag> : null}
                   </Paragraph>
                   <div
