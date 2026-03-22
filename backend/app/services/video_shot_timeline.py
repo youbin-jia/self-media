@@ -170,7 +170,7 @@ def visual_shots_from_project_meta(project_meta: dict) -> List[dict]:
     return []
 
 
-def shot_to_image_prompt(shot: dict) -> str:
+def shot_to_image_prompt(shot: dict, *, shot_index: int = 0) -> str:
     """用分镜的文案字段拼图像/视频生成提示词。"""
     parts: List[str] = []
     vd = str(shot.get("visual_description") or "").strip()
@@ -188,10 +188,13 @@ def shot_to_image_prompt(shot: dict) -> str:
             "素材参考：" + "，".join(str(x) for x in ms[:4] if str(x).strip())
         )
     core = " ".join(parts).strip() or "短视频实拍风格分镜画面，信息清晰"
-    return (
+    # 首镜写全约束，后续镜头缩短公共前缀，避免每镜一大段重复话术
+    prefix = (
         "短视频分镜画面，干净构图，无文字水印，适合口播与信息流视频："
-        + core
-    )[:1800]
+        if shot_index == 0
+        else "分镜画面，干净构图、无角标水印："
+    )
+    return (prefix + core)[:1800]
 
 
 def ai_image_generation_available() -> bool:
@@ -202,13 +205,16 @@ def ai_image_generation_available() -> bool:
         return False
 
 
-def shot_to_ltx2_prompt(shot: dict) -> str:
+def shot_to_ltx2_prompt(shot: dict, *, shot_index: int = 0) -> str:
     """LTX-2 文本生成视频：在分镜描述基础上强调音画、对白。"""
-    base = shot_to_image_prompt(shot)
-    extra = (
-        " 本镜头生成带同步对白的短视频片段；说话内容与下方口播文案一致，"
-        "自然语气，环境音合理，画面无角标水印。"
-    )
+    base = shot_to_image_prompt(shot, shot_index=shot_index)
+    if shot_index == 0:
+        extra = (
+            " 本镜头生成带同步对白的短视频片段；说话内容与下方口播文案一致，"
+            "自然语气，环境音合理，画面无角标水印。"
+        )
+    else:
+        extra = " 与口播同步对白，语气自然，环境音合理，无角标水印。"
     return (base + extra)[:2400]
 
 
@@ -289,7 +295,7 @@ async def build_ltx2_text_shot_timeline(
         dur = float(shot.get("duration_sec") or 5)
         dur = max(0.5, min(120.0, dur))
         sn = shot.get("shot_no", idx + 1)
-        prompt = shot_to_ltx2_prompt(shot)
+        prompt = shot_to_ltx2_prompt(shot, shot_index=idx)
         narr = ""
         if idx < len(narrations):
             narr = str(narrations[idx] or "").strip()
@@ -452,7 +458,7 @@ async def build_visual_shot_timeline(
     for idx, shot in enumerate(shots):
         dur = float(shot.get("duration_sec") or 5)
         dur = max(0.5, min(120.0, dur))
-        prompt = shot_to_image_prompt(shot)
+        prompt = shot_to_image_prompt(shot, shot_index=idx)
         sn = shot.get("shot_no", idx + 1)
 
         if on_shot_progress:

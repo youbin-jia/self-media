@@ -117,6 +117,9 @@ function ProjectWorkflow() {
     fullScriptDiff: []
   })
   const refreshTimerRef = useRef(null)
+  /** 防止并发 loadProject「旧响应覆盖新状态」（轮询 + 手动刷新同时发起时常见） */
+  const loadProjectSeqRef = useRef(0)
+  const lastLoadedProjectRef = useRef(null)
   /** 执行中每秒触发重渲染，用于本步已运行时长（与轮询无关的本地时钟） */
   const [progressClock, setProgressClock] = useState(0)
   useEffect(() => {
@@ -175,16 +178,24 @@ function ProjectWorkflow() {
   }, [project, scriptHistory.length])
 
   const loadProject = async (silent = false) => {
+    const seq = ++loadProjectSeqRef.current
     if (!silent) setLoading(true)
     try {
       const response = await getProject(id)
+      if (seq !== loadProjectSeqRef.current) {
+        return lastLoadedProjectRef.current
+      }
       const projectData = response.data
 
       try {
         const scriptRes = await getProjectScript(id)
+        if (seq !== loadProjectSeqRef.current) {
+          return lastLoadedProjectRef.current
+        }
         const scriptData = scriptRes.data
         const metadata = { ...(projectData.metadata || {}) }
         const steps = { ...(metadata.steps || {}) }
+        // 以项目元数据中的工作流状态为准，仅把脚本表内容合并进 output，避免覆盖 status/progress
         const scriptStep = { ...(steps.script || {}) }
         const output = { ...(scriptStep.output || {}) }
 
@@ -200,7 +211,11 @@ function ProjectWorkflow() {
         // If script endpoint not ready, keep project payload only.
       }
 
+      if (seq !== loadProjectSeqRef.current) {
+        return lastLoadedProjectRef.current
+      }
       setProject(projectData)
+      lastLoadedProjectRef.current = projectData
       updateCurrentStep(projectData)
 
       const scriptOutput = projectData?.metadata?.steps?.script?.output || {}
@@ -1842,25 +1857,46 @@ function ProjectWorkflow() {
       {workflowSteps.map((step, index) => (
         (() => {
           const stepData = project?.steps?.[step.key] || project?.metadata?.steps?.[step.key]
-          const statusMeta = getStatusMeta(step.key)
           const inFlight = runningStepKey === step.key || stepData?.status === 'processing'
-          const progressText = stepData?.progress?.message || (inFlight ? '处理中...' : '')
+          /** 已点「执行/重新生成」但轮询尚未拿到 processing：服务端仍为 completed+100%，避免进度条一直满格 */
+          const staleCompletedWhileRunning = inFlight && stepData?.status === 'completed'
+          const statusMeta = getStatusMeta(step.key)
+          const uiStatusMeta = staleCompletedWhileRunning
+            ? {
+                ...statusMeta,
+                progress: 5,
+                text: '处理中',
+                tagColor: 'processing',
+                cardColor: '#e6f4ff',
+                borderColor: '#91caff'
+              }
+            : statusMeta
+          const progressText =
+            (staleCompletedWhileRunning ? '' : stepData?.progress?.message) || (inFlight ? '处理中...' : '')
           const progressMeta = stepData?.progress || {}
           const stageLabel = getStageLabel(progressMeta.stage)
+          const displayStageLabel = staleCompletedWhileRunning ? '等待调度' : stageLabel
           const totalSeconds = toIntSeconds(progressMeta.total_duration_sec)
-          const currentStageSeconds = getElapsedSeconds(
-            progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.entered_at : null,
-            progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.exited_at : null
-          )
+          const currentStageSeconds = staleCompletedWhileRunning
+            ? null
+            : getElapsedSeconds(
+                progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.entered_at : null,
+                progressMeta.timeline?.length ? progressMeta.timeline[progressMeta.timeline.length - 1]?.exited_at : null
+              )
           const wallStepSeconds =
-            inFlight && progressMeta.started_at
+            inFlight && !staleCompletedWhileRunning && progressMeta.started_at
               ? getElapsedSeconds(progressMeta.started_at, null)
               : null
           void progressClock
-          const displayTotalSeconds = wallStepSeconds != null ? wallStepSeconds : totalSeconds
-          const etaSeconds = getEtaSeconds(progressMeta)
+          const displayTotalSeconds = staleCompletedWhileRunning
+            ? null
+            : wallStepSeconds != null
+              ? wallStepSeconds
+              : totalSeconds
+          const etaSeconds = staleCompletedWhileRunning ? null : getEtaSeconds(progressMeta)
           const serverPercent = Number(progressMeta.percent)
-          const showServerPct = Number.isFinite(serverPercent) && inFlight
+          const showServerPct =
+            Number.isFinite(serverPercent) && inFlight && stepData?.status === 'processing'
           const stageTimeline = Array.isArray(progressMeta.timeline) ? progressMeta.timeline : []
           const llmCalls = Array.isArray(progressMeta.llm_calls) ? progressMeta.llm_calls : []
           const llmCallByStage = llmCalls.reduce((acc, item) => {
@@ -1918,14 +1954,14 @@ function ProjectWorkflow() {
               title={`${index + 1}. ${step.title}`}
               style={{
                 marginBottom: '16px',
-                background: statusMeta.cardColor,
-                borderColor: failedHighlight ? '#ff4d4f' : statusMeta.borderColor,
+                background: uiStatusMeta.cardColor,
+                borderColor: failedHighlight ? '#ff4d4f' : uiStatusMeta.borderColor,
                 boxShadow: failedHighlight ? '0 0 0 2px rgba(255, 77, 79, 0.22)' : undefined,
                 animationDelay: `${Math.min(0.07 * (index + 1), 0.45)}s`
               }}
               extra={
                 <Space>
-                  <Tag color={statusMeta.tagColor}>{statusMeta.text}</Tag>
+                  <Tag color={uiStatusMeta.tagColor}>{uiStatusMeta.text}</Tag>
                   <Button
                     type="primary"
                     onClick={() => handleExecuteStep(step.key)}
@@ -1945,9 +1981,9 @@ function ProjectWorkflow() {
               }
             >
               <Progress
-                percent={statusMeta.progress}
+                percent={uiStatusMeta.progress}
                 size="small"
-                status={statusMeta.progress === 100 ? 'success' : statusMeta.progress > 0 ? 'active' : 'normal'}
+                status={uiStatusMeta.progress === 100 ? 'success' : uiStatusMeta.progress > 0 ? 'active' : 'normal'}
                 showInfo
                 format={(pct) => `${pct}%`}
                 style={{ marginBottom: 12 }}
@@ -1960,7 +1996,7 @@ function ProjectWorkflow() {
                   style={{ marginBottom: 12 }}
                   message={(
                     <span>
-                      <strong>{stageLabel}</strong>
+                      <strong>{displayStageLabel}</strong>
                       {showServerPct ? <Tag color="processing" style={{ marginLeft: 8 }}>后端 {serverPercent}%</Tag> : null}
                       <span style={{ marginLeft: 8 }}>{progressText || '处理中…'}</span>
                     </span>
@@ -2015,7 +2051,11 @@ function ProjectWorkflow() {
                 <div>
                   <Paragraph className="step-status-line">
                     <strong>状态：</strong>
-                    <Tag color={statusMeta.tagColor}>{stepData.status}</Tag>
+                    {staleCompletedWhileRunning ? (
+                      <Tag color="processing">已提交，等待后端状态</Tag>
+                    ) : (
+                      <Tag color={statusMeta.tagColor}>{stepData.status}</Tag>
+                    )}
                     {progressMeta.stage ? <Tag color="blue">阶段：{stageLabel}</Tag> : null}
                     {showServerPct ? <Tag color="purple">进度：{serverPercent}%</Tag> : null}
                     {displayTotalSeconds != null ? <Tag color="geekblue">本步累计：{displayTotalSeconds}s</Tag> : null}

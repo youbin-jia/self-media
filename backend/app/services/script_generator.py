@@ -86,11 +86,15 @@ class ScriptGenerator:
 1. 输出总时长建议：90-150秒，按“3秒钩子-主体推进-结尾行动引导”设计节奏
 2. 先给出受众画像（痛点、期待、认知水平）与内容定位
 3. 给出至少 3 个开场钩子备选（反差、提问、冲突、数据震撼任选）
-4. 主体至少拆成 4-6 个信息段，每段必须写明：目标、核心信息、证明素材、情绪基调、预计时长
-5. 明确每段建议画面类型（口播/B-roll/截图/实拍/动画）与转场方式
-6. 单独列出“互动点设计”：评论引导、收藏引导、转发触发点
-7. 单独列出“风险与合规提醒”：避免夸大、避免绝对化表述
-8. 必须使用中文正文输出；除专业术语、品牌名、API 名称外，不要大段使用英文
+4. 主体至少拆成 4-6 个信息段，每段必须写明：目标、核心信息、证明素材、情绪基调、**预计时长（秒）**
+5. **口播容量（大纲必须写清，供下游写完整脚本对齐）**：中文口播语速按约 **每秒 4～6 个汉字** 估算（信息密、语速略快可到约 6 字/秒；情绪段落可略慢但不得无故拖长静音）。  
+   每一信息段在「预计时长」之外，必须再写一行 **「口播字数建议：约 A～B 字」**，其中 **A = 时长(秒) × 4** 向上取整，**B = 时长(秒) × 6** 向上取整。  
+   例：本段 **20 秒** → 口播字数建议 **约 80～120 字**；**15 秒** → **约 60～90 字**；**3 秒** → **约 12～18 字**。  
+   禁止只写时长却不给口播容量，否则下游无法写足旁白。
+6. 明确每段建议画面类型（口播/B-roll/截图/实拍/动画）与转场方式
+7. 单独列出“互动点设计”：评论引导、收藏引导、转发触发点
+8. 单独列出“风险与合规提醒”：避免夸大、避免绝对化表述
+9. 必须使用中文正文输出；除专业术语、品牌名、API 名称外，不要大段使用英文
 
 输出格式（严格遵守）：
 【受众与定位】
@@ -105,12 +109,13 @@ class ScriptGenerator:
 
 【分段大纲（90-150秒）】
 第1段（xx秒）：
+- 口播字数建议：（必填，按 xx 秒 × 4～6 字/秒 写出约 A～B 字）
 - 目标：
 - 关键信息：
 - 画面建议：
 - 情绪与节奏：
 
-...（继续到最后一段）
+...（继续到最后一段；每一段都必须含「口播字数建议」）
 
 【互动与转化设计】
 - 评论引导：
@@ -144,8 +149,7 @@ class ScriptGenerator:
                 # Keep original if rewrite fails
                 pass
 
-        # Create simplified segments for now (10 segments with placeholder text)
-        # In production, this would parse the actual script into segments
+        # 从正文解析「旁白/台词」等作为分段，供 TTS / LTX 口播对齐；解析失败再回退
         segments = self._create_segments(full_script)
 
         # Detect script quality
@@ -159,31 +163,42 @@ class ScriptGenerator:
 
     def build_full_script_prompt(self, outline: str, topic: str) -> str:
         """Build the full script prompt sent to LLM."""
-        return f"""你是一位爆款短视频导演、编剧和后期统筹。请基于以下大纲，生成“可直接交给拍摄与剪辑团队执行”的完整版脚本。
+        return f"""你是一位爆款短视频导演、编剧和后期统筹。请基于以下大纲，生成“可直接交给拍摄、TTS 口播与 AI 视频生成管线执行”的完整版脚本。
 
 主题：{topic}
 
 大纲：
 {outline}
 
+【旁白与字幕分工（必须严格遵守，违者视为不合格）】
+1. 「旁白」= 口播正文：供配音/TTS、以及文生视频时的对白参考。必须是**完整、可逐字朗读**的一段话（可含 2-5 个短句），信息紧凑、有具体名词与动作，禁止口号式空话。
+2. 「字幕」= **上屏花字/关键词**，仅供观众扫视，**禁止**写成旁白的缩略版或同义复述。每条字幕建议 **4-12 个汉字**（必要时可加单个英文缩写如 API），例如钩子词、数字、对比词、步骤序号；长镜可写 2 条短字幕用「｜」分隔，但不要拼成一整句旁白。
+3. **旁白字数必须与该镜头「时长」严格匹配（硬性规则）**  
+   中文口播按 **每秒约 4～6 个汉字**（同一段落内标点不计入「字数」也可，但信息密度要够）。记该镜头时长为 **T 秒**，则本镜 **旁白汉字总数** 建议落在 **⌈T×4⌉～⌈T×6⌉** 之间（⌈⌉ 表示向上取整）。  
+   - 例：**T=20 秒** → 旁白约 **80～120 字**（绝不允许只有二十来字就结束）。  
+   - 例：**T=15 秒** → 旁白约 **60～90 字**。  
+   - 例：**T=3 秒** → 旁白约 **12～18 字**，一句完整钩子。  
+   **自检（输出前在脑中过一遍）**：每个镜头旁白若 **少于 T×4 字**，视为不合格，必须扩写：加具体例子、步骤、对比、数据或一句过渡，直到听感能撑满 T 秒。
+4. 「画面与动作」= 给摄影师与 **文生视频/分镜模型** 用的画面说明：必须写清 **场景环境、光线与色调、主体外观/界面关键区域、具体动作或 UI 变化、镜头运动节奏**；禁止只写“展示界面”“镜头推进”这类无法执行的概括句。
+
 要求：
-1. 总时长 90-150 秒，中文正文不少于 1500 字，信息密度高于常规口播
+1. 总时长 90-150 秒，【详细执行脚本】部分中文正文不少于 1500 字，整体信息密度高于常规口播
 2. 至少输出 12-16 个镜头，镜头之间有明确“起承转合”和节奏爬升
-3. 必须覆盖：分镜、旁白、画面调度、音乐/音效、字幕、转场、导演提示
-4. 每个镜头都必须包含：
+3. 每个镜头都必须包含以下字段（缺一不可），且旁白/字幕/画面三者**禁止同质化**：
    - 镜头编号与时长
    - 景别/机位/运镜（如推拉摇移跟、手持或稳定器）
-   - 画面内容与人物动作（具体到可执行）
-   - 旁白（完整台词，避免空话）
-   - 字幕（精简有力，可做重点高亮）
+   - 画面与动作（按上文「画面与动作」标准写细）
+   - 旁白（按字数与时长匹配规则写足）
+   - 字幕（仅关键词/花字，禁止复述旁白）
    - 音乐/音效（曲风、节奏点、卡点建议）
    - 剪辑提示（节奏、转场、是否叠加素材）
-5. 开场前 3-8 秒必须有强钩子；中段至少 2 个情绪峰值；结尾必须有行动号召（评论/关注/私信/收藏）
-6. 音频设计必须分层：人声、BGM、环境音、强调音效，标注出现时机与强弱
-7. 若涉及数据/观点，优先加入“可视化呈现建议”（图表、关键词大字、对比画面）
-8. 必须使用中文正文输出；除专业术语、品牌名、API 名称外，不要大段使用英文
-9. 不要输出解释性前言，不要道歉，不要免责声明，直接给正文成片方案
-10. 若你需要引用大纲，请以当前“大纲”字段为准（若用户自定义 Prompt 中包含 {{OUTLINE}}，系统会自动替换）
+   - 导演提示
+4. 开场前 3-8 秒必须有强钩子；中段至少 2 个情绪峰值；结尾必须有行动号召（评论/关注/私信/收藏）
+5. 音频设计必须分层：人声、BGM、环境音、强调音效，标注出现时机与强弱
+6. 若涉及数据/观点，在「画面与动作」或「剪辑提示」中写明可视化呈现（图表、关键词大字、对比画面）
+7. 必须使用中文正文输出；除专业术语、品牌名、API 名称外，不要大段使用英文
+8. 不要输出解释性前言，不要道歉，不要免责声明，直接给正文成片方案
+9. 若你需要引用大纲，请以当前「大纲」字段为准（若用户自定义 Prompt 中包含 {{OUTLINE}}，系统会自动替换）
 
 输出结构（严格遵守）：
 
@@ -196,11 +211,11 @@ class ScriptGenerator:
 【详细执行脚本】
 （逐镜头输出，至少 12-16 个镜头）
 镜头1：
-- 时长：
+- 时长：（秒，需与旁白密度一致）
 - 景别/机位：
-- 画面与动作：
-- 旁白：
-- 字幕：
+- 画面与动作：（细化到可供拍摄/生成的画面要素）
+- 旁白：（口播全文，字数与时长匹配）
+- 字幕：（仅上屏关键词/花字，勿重复旁白语义）
 - 音乐/音效：
 - 剪辑提示：
 - 导演提示：
@@ -209,35 +224,93 @@ class ScriptGenerator:
 
 【后期与剪辑建议】
 - 转场节奏建议：
-- 字幕排版建议：
+- 字幕排版建议：（强调花字层级、与旁白不同步时的设计）
 - BGM与音效混音建议：
 - 封面标题与前3秒文案建议（至少3套）：
 
 请直接输出脚本正文，不要输出“说明、解释、免责声明”。"""
 
+    def _parse_narration_lines_from_script(self, full_script: str) -> List[str]:
+        """
+        从脚本正文中按行提取旁白/台词，顺序与镜头大致一致。
+        匹配：旁白：、台词：、- 旁白： 等常见模板。
+        """
+        text = str(full_script or "")
+        if not text.strip():
+            return []
+
+        lines_out: List[str] = []
+        # 单行旁白/台词（同一行写完）
+        line_pat = re.compile(
+            r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*([^\n]+)",
+            re.MULTILINE,
+        )
+        for m in line_pat.finditer(text):
+            chunk = m.group(1).strip().strip('"').strip("“”").strip()
+            if len(chunk) > 1 and not chunk.startswith("Segment ") and "placeholder" not in chunk.lower():
+                lines_out.append(chunk)
+
+        if lines_out:
+            return lines_out
+
+        # 多行旁白：「旁白：」下一行起直到空行或下一个字段标题
+        block_pat = re.compile(
+            r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*\n([\s\S]*?)(?=\n\s*(?:[-•\d\.\)\(、]*\s*(?:景别|机位|画面|字幕|音乐|剪辑|导演|镜头)|\n\s*镜头|\Z))",
+            re.MULTILINE,
+        )
+        for m in block_pat.finditer(text):
+            block = m.group(1).strip()
+            block = re.sub(r"\s+", " ", block).strip()
+            if len(block) > 8:
+                lines_out.append(block)
+
+        return lines_out
+
     def _create_segments(self, full_script: str) -> List[ScriptSegment]:
         """
-        Create script segments from full script text
-
-        Args:
-            full_script: The complete script text
-
-        Returns:
-            List of ScriptSegment objects
+        由完整脚本生成 segments：优先按「旁白/台词」拆条，否则按段落回退。
         """
         import uuid
 
-        # Simplified implementation: create 10 segments
-        # In production, this would intelligently parse the script
-        segments = []
-        for i in range(10):
-            segment = ScriptSegment(
-                id=str(uuid.uuid4()),
-                text=f"Segment {i+1} content placeholder",
-                duration=6.0,  # 6 seconds per segment
-                emotion="neutral",
-                material_ids=[]
-            )
-            segments.append(segment)
+        narrations = self._parse_narration_lines_from_script(full_script)
+        if narrations:
+            n = len(narrations)
+            avg = max(4.0, min(15.0, 120.0 / max(1, n)))
+            return [
+                ScriptSegment(
+                    id=str(uuid.uuid4()),
+                    text=t,
+                    duration=float(avg),
+                    emotion="neutral",
+                    material_ids=[],
+                )
+                for t in narrations
+            ]
 
-        return segments
+        # 回退：按空行分段，再按单行长句
+        parts = [p.strip() for p in str(full_script or "").split("\n\n") if p.strip()]
+        if not parts:
+            parts = [p.strip() for p in str(full_script or "").split("\n") if len(p.strip()) > 24]
+        if not parts:
+            return [
+                ScriptSegment(
+                    id=str(uuid.uuid4()),
+                    text="（未能从脚本中解析出口播句，请检查是否包含「旁白：」字段）",
+                    duration=6.0,
+                    emotion="neutral",
+                    material_ids=[],
+                )
+            ]
+
+        preview_parts = parts[:20]
+        avg = max(5.0, min(12.0, 120.0 / max(1, len(preview_parts))))
+        return [
+            ScriptSegment(
+                id=str(uuid.uuid4()),
+                text=text,
+                duration=float(avg),
+                emotion="neutral",
+                material_ids=[],
+            )
+            for text in preview_parts
+        ]
