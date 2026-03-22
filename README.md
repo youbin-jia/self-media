@@ -97,9 +97,10 @@ chmod +x scripts/dev.sh
 脚本会自动执行以下操作：
 
 - 启动前自检（`ss`、`curl`、`npm` 命令可用性）
-- 启动前端口检查（重点检查 `8000`）
-  - 若发现外部旧 `uvicorn app.main:app` 占用，会自动停止并拉起最新后端
-  - 若被其他未知进程占用，会中断启动并提示先释放端口
+- 启动前端口检查（`8000` 后端 + `3000` 前端，可用环境变量 `FRONTEND_PORT` 修改）
+  - 若发现外部旧 `uvicorn app.main:app` 占用 `8000`，会自动停止并拉起最新后端
+  - 若 `FRONTEND_PORT`（默认 3000）被旧的 Vite 进程占用，会自动结束该进程，**避免静默换端口**
+  - 前端使用 Vite `strictPort: true`，端口被非 Vite 进程占用时会中断启动并提示处理
 - 若 `backend/.env` 不存在，则由 `backend/.env.example` 自动生成
 - 自动创建 `backend/data` 目录（避免 SQLite 文件路径报错）
 - 前端缺少依赖时自动执行 `npm install`
@@ -126,6 +127,12 @@ chmod +x scripts/dev.sh
 ```bash
 # 一键启动所有开发服务
 ./scripts/dev.sh start
+
+# 停止后重新启动（固定端口更新部署推荐）
+./scripts/dev.sh restart
+
+# 指定前端端口（需与未被占用的端口一致）
+FRONTEND_PORT=3001 ./scripts/dev.sh start
 
 # 查看服务状态
 ./scripts/dev.sh status
@@ -170,7 +177,7 @@ tail -f .devrun/logs/frontend.log
 - `sqlite3.OperationalError: unable to open database file`
   - 确保 `backend/data` 目录存在；脚本已自动处理，如手动启动请自行创建
 - `Address already in use`
-  - 端口冲突（常见 8000/5173/6379），先停止旧进程或修改端口配置
+  - 端口冲突（常见 8000/3000/6379），先 `./scripts/dev.sh stop` 或结束占用进程；前端可设 `FRONTEND_PORT`
 - 启动时提示 `关键路由缺失` 或脚本生成仍 404
   - 说明正在运行的后端不是最新代码版本（或运行目录错误）
   - 执行 `./scripts/dev.sh stop && ./scripts/dev.sh start`，并确认 `status` 正常

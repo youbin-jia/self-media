@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 前端开发端口（默认 3000）。若被占用，start 前会尝试结束旧的 Vite 进程。
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 RUN_DIR="$ROOT_DIR/.devrun"
 LOG_DIR="$RUN_DIR/logs"
 PID_DIR="$RUN_DIR/pids"
@@ -14,14 +16,18 @@ REDIS_PID_FILE="$PID_DIR/redis.pid"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 print_usage() {
-  cat <<'EOF'
+  cat <<EOF
 Usage:
   ./scripts/dev.sh start    # 一键启动 Redis(可选)、API、Worker、Frontend
   ./scripts/dev.sh stop     # 一键停止本脚本启动的服务
+  ./scripts/dev.sh restart  # stop 后重新 start（固定端口部署推荐）
   ./scripts/dev.sh status   # 查看服务状态
   ./scripts/dev.sh logs     # 查看日志路径
   ./scripts/dev.sh tail     # 实时查看服务日志（Ctrl+C 退出）
   ./scripts/dev.sh check-llm # 检查默认LLM配置与可用性
+
+环境变量:
+  FRONTEND_PORT=${FRONTEND_PORT}  # 前端端口（默认 3000），与 frontend/vite.config.js 一致
 
 Wan2.1 I2V 侧车（可选）:
   见 docs/WAN2.1_LOCAL.md 与 ./scripts/wan2.1/start_wan_sidecar.sh
@@ -114,6 +120,42 @@ verify_backend_routes() {
   echo "[backend] 路由检查通过 (HTTP $code)"
 }
 
+is_likely_vite_frontend() {
+  local pid="$1"
+  local cmdline
+  cmdline="$(tr '\0' ' ' </proc/"$pid"/cmdline 2>/dev/null || true)"
+  echo "$cmdline" | grep -qiE 'vite|@vitejs|node_modules/.bin/vite' && return 0
+  return 1
+}
+
+precheck_frontend_port() {
+  local port="$FRONTEND_PORT"
+  local pid
+  pid="$(get_pid_by_port "$port" || true)"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if is_pid_from_file "$FRONTEND_PID_FILE" "$pid"; then
+    return 0
+  fi
+  if is_likely_vite_frontend "$pid"; then
+    echo "[precheck] 发现占用 ${port} 的旧前端(Vite)进程，自动停止 (pid=$pid)"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    sleep 1
+    return 0
+  fi
+  local cmdline
+  cmdline="$(tr '\0' ' ' </proc/"$pid"/cmdline 2>/dev/null || true)"
+  echo "[precheck] 端口 ${port} 被非 Vite 进程占用 (pid=$pid)"
+  echo "           cmd: ${cmdline:0:240}"
+  echo "           请先结束该进程，或执行: FRONTEND_PORT=3001 ./scripts/dev.sh start"
+  return 1
+}
+
 precheck_ports() {
   local backend_pid
   backend_pid="$(get_pid_by_port 8000 || true)"
@@ -137,6 +179,7 @@ run_prechecks() {
   require_cmd curl "请安装 curl 用于健康检查"
   require_cmd npm "请先安装 Node.js / npm"
   precheck_ports
+  precheck_frontend_port
 }
 
 start_if_needed() {
@@ -280,12 +323,18 @@ do_start() {
     "$LOG_DIR/worker.log" \
     bash -lc "$worker_cmd"
 
-  start_if_needed \
-    "frontend" \
-    "$FRONTEND_PID_FILE" \
-    "$ROOT_DIR/frontend" \
-    "$LOG_DIR/frontend.log" \
-    npm run dev
+  if is_running "$FRONTEND_PID_FILE"; then
+    echo "[frontend] 已在运行 (pid=$(cat "$FRONTEND_PID_FILE"))"
+  else
+    (
+      cd "$ROOT_DIR/frontend"
+      export FRONTEND_PORT
+      nohup npm run dev >"$LOG_DIR/frontend.log" 2>&1 &
+      echo $! >"$FRONTEND_PID_FILE"
+    )
+    echo "[frontend] 已启动 (pid=$(cat "$FRONTEND_PID_FILE"), 端口=$FRONTEND_PORT)"
+    wait_for_pid_healthy "frontend" "$FRONTEND_PID_FILE" 3
+  fi
 
   wait_for_http_ok "backend" "http://127.0.0.1:8000/health" 30
   verify_backend_routes
@@ -293,7 +342,7 @@ do_start() {
   echo
   echo "启动完成："
   echo "  API      -> http://127.0.0.1:8000"
-  echo "  Frontend -> 查看 $LOG_DIR/frontend.log 中的 Vite 地址"
+  echo "  Frontend -> http://127.0.0.1:${FRONTEND_PORT}/"
   echo "  日志目录 -> $LOG_DIR"
 }
 
@@ -414,6 +463,11 @@ main() {
   local cmd="${1:-start}"
   case "$cmd" in
     start)
+      do_start
+      ;;
+    restart)
+      do_stop
+      sleep 1
       do_start
       ;;
     stop)
