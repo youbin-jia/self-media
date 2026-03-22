@@ -47,13 +47,20 @@ export function VideoPipelineEnvPlugin() {
 
   const wanOk = data?.wan_i2v_ready
   const wanOn = data?.wan_i2v_enabled
+  const ltxOn = data?.ltx2_t2v_enabled
+  const ltxOk = data?.ltx2_t2v_ready
 
   return (
     <Card
       size="small"
       className="workflow-plugin-pipeline-env"
-      title={(<Space><CloudServerOutlined /><span>视频生成环境（通义万相 Wan I2V）</span></Space>)}
+      title={(<Space><CloudServerOutlined /><span>视频生成环境（LTX-2 / Wan I2V）</span></Space>)}
     >
+      <Space wrap style={{ marginBottom: 8 }}>
+        <Tag color={ltxOn ? 'blue' : 'default'}>LTX2 T2V {ltxOn ? '已启用' : '未启用'}</Tag>
+        <Tag color={ltxOk ? 'success' : 'default'}>{ltxOk ? 'LTX 侧车可调用' : 'LTX 未就绪'}</Tag>
+        <Tag>{data?.ltx2_resolution || '-'} @ {data?.ltx2_fps ?? '-'} fps</Tag>
+      </Space>
       <Space wrap style={{ marginBottom: 8 }}>
         <Tag color={wanOn ? 'blue' : 'default'}>WAN_I2V {wanOn ? '已启用' : '未启用'}</Tag>
         <Tag color={wanOk ? 'success' : 'warning'}>{wanOk ? 'I2V 可调用' : 'I2V 未就绪'}</Tag>
@@ -62,8 +69,11 @@ export function VideoPipelineEnvPlugin() {
         <Tag>分辨率：{data?.wan_size || '-'}</Tag>
       </Space>
       <Space wrap size={[4, 4]} style={{ marginBottom: 8 }}>
+        <Tag color={data?.ltx2_endpoint_configured ? 'processing' : 'default'}>
+          LTX 端点{data?.ltx2_endpoint_configured ? '已配' : '未配'}
+        </Tag>
         <Tag color={data?.wan_endpoint_configured ? 'processing' : 'default'}>
-          HTTP 端点{data?.wan_endpoint_configured ? '已配' : '未配'}
+          Wan HTTP 端点{data?.wan_endpoint_configured ? '已配' : '未配'}
         </Tag>
         <Tag color={data?.wan_repo_has_generate_py ? 'success' : 'default'}>
           仓库 generate.py {data?.wan_repo_has_generate_py ? 'OK' : '—'}

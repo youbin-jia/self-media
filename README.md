@@ -1,364 +1,244 @@
 # 自媒体视频自动化平台
 
-一个完整的自媒体视频自动化生成平台，支持从话题发现到视频导出的全流程自动化。
+**一条流水线，从灵感到成片。** 面向创作者与小型团队的 **AI 视频生产中枢**：脚本、分镜、配音、合成与发布准备可在统一工作台完成，显著压缩从选题到可发成片的时间成本。
+
+> 后端 **FastAPI** + 前端 **React（Vite）**，支持本地/私有化部署，数据与模型密钥掌握在你自己手中。
 
 ## 功能特性
 
-### 核心功能
+### 产品亮点（营销向）
 
-- 🔥 **话题监控** - 自动抓取微博、知乎等平台热门话题
-- 📝 **脚本生成** - AI驱动的脚本自动生成（支持Claude/GPT/GLM）
-- 🖼️ **素材收集** - 自动收集图片、视频、音频素材
-- 🎬 **视频合成** - 自动合成视频，支持字幕、特效；可选接入本地 **通义万相 Wan2.1 图生视频**（见 [`docs/WAN2.1_LOCAL.md`](docs/WAN2.1_LOCAL.md)）；**LTX-2 音画一体模型**本地部署见 [`docs/LTX2_LOCAL.md`](docs/LTX2_LOCAL.md)
-- 🔊 **语音合成** - 多种TTS引擎（Azure/ElevenLabs）
-- 📤 **多平台导出** - 一键导出到抖音、B站、小红书等
+- **爆款效率** — 用多模型 LLM 快速产出口播稿、分镜与画面描述，少改直出、多改精进，适配日更与矩阵号节奏。
+- **音画一体** — 可选接入 **LTX-2** 等文本生成音视频能力，单镜即可带对白与环境声；亦可接 **Wan2.1 图生视频**、传统时间轴 + TTS，按项目策略自由组合。
+- **多平台心智** — 工作流围绕「可发布的短视频」设计，成片格式与元数据可面向 **抖音、B 站、小红书、视频号** 等主流内容平台做适配与导出（具体能力与配置以当前版本及 `backend/.env` 为准）。
+- **团队协作与安全** — JWT + 角色权限，项目隔离；Redis 与异步队列支撑高峰合成，适合从小作坊平滑扩到小团队。
+- **可扩展商业叙事** — 素材源 **插件化**，Webhook 与 API 便于对接自有 CMS、审批流或计费系统，方便 OEM 与二次商业化。
 
-### 系统特性
+### 核心能力
 
-- 🔐 **用户认证** - JWT Token认证，RBAC权限控制
-- 📦 **插件系统** - 可扩展的插件架构
-- 🔔 **Webhook通知** - 事件驱动的通知机制
-- 📱 **移动端适配** - PWA支持，移动端专用API
-- ⚡ **性能优化** - Redis缓存，Celery异步任务队列
+- **智能脚本** — 多厂商 LLM（Claude / OpenAI / GLM / Kimi 等）生成与迭代脚本，支持按项目配置切换，见 `backend/.env`。
+- **素材与分镜** — 自动/半自动收集参考素材，视觉步骤结构化输出分镜，为合成与审片打下基础。
+- **视频合成** — 时间轴拼接、字幕与包装；可选 **LTX-2 文本音画分镜**（[`docs/LTX2_PIPELINE.md`](docs/LTX2_PIPELINE.md)）、**通义万相 Wan2.1 图生视频**（[`docs/WAN2.1_LOCAL.md`](docs/WAN2.1_LOCAL.md)）；本地 **ComfyUI + GGUF** 部署见 [`docs/LTX2_LOCAL.md`](docs/LTX2_LOCAL.md)。
+- **专业配音** — 对接 **Azure Speech、ElevenLabs** 等 TTS，成片听感更接近商业短视频标准。
+- **发布与运营辅助** — 导出与任务流可对接多平台发布准备（随版本迭代扩展）；配合话题/热点能力（可按插件与配置启用）放大流量入口。
+
+### 工程能力
+
+- **高性能底座** — Redis 缓存、Celery **多优先级队列**（high / medium / low），大任务不拖死交互。
+- **插件式素材生态** — `plugins/material_sources/` 扩展图片来源与抓取策略，避免被单一供应商绑定。
+- **全端触达** — 提供 `frontend/pwa/` 等 **PWA** 资源，移动端看进度、过审片更方便。
+- **可观测与集成** — Webhook 通知、开放 API，便于接入监控、飞书/钉钉机器人与内部工具链。
 
 ## 技术栈
 
-| 后端 | 前端 | 服务 |
-|------|------|------|
-| FastAPI | Vue 3 / React | Redis |
-| SQLAlchemy | Vite | Celery |
-| Pydantic | TypeScript | FFmpeg |
-| PyJWT | PWA | PostgreSQL |
+| 后端 | 前端 | 运行依赖 |
+|------|------|----------|
+| FastAPI、SQLAlchemy、Pydantic | React 18、Vite、Ant Design | Redis、FFmpeg |
+| Celery、PyJWT | TypeScript | Conda `self-media`（Python 3.11） |
 
 ## 快速开始
 
 ### 环境要求
 
-- Conda (Miniconda 或 Anaconda)
-- Python 3.10+
-- Redis 6.0+
-- FFmpeg 4.0+
+- **Conda**（Miniconda / Miniforge 等），环境名 **`self-media`**
+- **Python 3.11**（见根目录 `environment.yml`）
+- **Node.js + npm**（前端）
+- **Redis**（开发脚本可尝试本机拉起 `redis-server`）
+- **FFmpeg**（视频处理；Conda 环境内通常已带）
 
 ### 安装
 
 ```bash
-# 克隆项目
 git clone <repository-url>
 cd self-media
 
-# 创建并激活 conda 环境
 conda env create -f environment.yml
 conda activate self-media
 
-# 配置环境变量
 cp backend/.env.example backend/.env
-# 编辑 .env 文件，配置必要的API密钥
-
-# 启动服务
-cd backend
-uvicorn app.main:app --reload
+# 编辑 backend/.env：JWT、LLM、TTS 等密钥与开关
 ```
 
-### 启动Celery Worker
+### 推荐：一键开发启动（`scripts/dev.sh`）
+
+在仓库根目录执行（会自动创建 `backend/data`、按需 `npm install`、记录 PID 与日志）：
 
 ```bash
-cd backend
-celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low
-```
-
-### 验证安装
-
-```bash
-# 访问API文档
-open http://localhost:8000/docs
-
-# 健康检查
-curl http://localhost:8000/health
-```
-
-### 一键开发启动（推荐）
-
-项目提供 `scripts/dev.sh` 用于一键启动本地开发依赖与服务（Redis、API、Celery Worker、Frontend）。
-
-#### 前置要求
-
-- 已安装并可使用 `conda`（并激活 `self-media` 环境）
-- 已安装 Node.js 和 npm（用于前端）
-- 已安装 Redis（脚本会尝试自动启动本机 `redis-server`）
-
-#### 首次使用
-
-```bash
-cd self-media
 chmod +x scripts/dev.sh
-./scripts/dev.sh start
-```
 
-脚本会自动执行以下操作：
-
-- 启动前自检（`ss`、`curl`、`npm` 命令可用性）
-- 启动前端口检查（`8000` 后端 + `3000` 前端，可用环境变量 `FRONTEND_PORT` 修改）
-  - 若发现外部旧 `uvicorn app.main:app` 占用 `8000`，会自动停止并拉起最新后端
-  - 若 `FRONTEND_PORT`（默认 3000）被旧的 Vite 进程占用，会自动结束该进程，**避免静默换端口**
-  - 前端使用 Vite `strictPort: true`，端口被非 Vite 进程占用时会中断启动并提示处理
-- 若 `backend/.env` 不存在，则由 `backend/.env.example` 自动生成
-- 自动创建 `backend/data` 目录（避免 SQLite 文件路径报错）
-- 前端缺少依赖时自动执行 `npm install`（长耗时时会周期性打印已耗时，可用 `DEV_PROGRESS_INTERVAL` 调整间隔，见 `./scripts/dev.sh` 帮助）
-- 启动并托管以下进程：
-  - `uvicorn app.main:app --reload`
-  - `celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low`
-  - `npm run dev`
-- 启动后健康检查：
-  - 后端 `/health` 可用性检查
-  - 关键路由检查：`/api/projects/{id}/steps/script/execute`（避免旧进程导致功能 404）
-
-#### Wan2.1 图生视频侧车（可选）
-
-若已按 **[`docs/WAN2.1_LOCAL.md`](docs/WAN2.1_LOCAL.md)** 完成 `setup_wan2.1.sh` 与权重下载，请在**另开终端**先启动侧车，再执行 `./scripts/dev.sh start`：
-
-```bash
-./scripts/wan2.1/start_wan_sidecar.sh
-```
-
-并将 `backend/.env.wan.generated` 合并进 `backend/.env`。
-
-#### 镜像与代理（可选）
-
-若 **GitHub / Hugging Face** 访问不稳定，见 **[`docs/MIRROR_SOURCES.md`](docs/MIRROR_SOURCES.md)**（如 `HF_ENDPOINT`、`LTX2_GITHUB_MIRROR`、`git` 代理等）。
-
-#### 常用命令
-
-```bash
-# 一键启动所有开发服务
+# 启动：Redis（若需）+ 后端 8000 + Celery Worker + 前端 3000
 ./scripts/dev.sh start
 
-# 停止后重新启动（固定端口更新部署推荐）
-./scripts/dev.sh restart
+# 同上，并一并启动 LTX 文本视频侧车（9820，用于调试 LTX 管线）
+START_LTX2_SIDECAR=1 ./scripts/dev.sh start
 
-# 指定前端端口（需与未被占用的端口一致）
-FRONTEND_PORT=3001 ./scripts/dev.sh start
-
-# 查看服务状态
-./scripts/dev.sh status
-
-# 查看日志目录与日志文件
-./scripts/dev.sh logs
-
-# 实时查看日志（Ctrl+C 退出）
-./scripts/dev.sh tail
-
-# 检查默认LLM是否可用（配置 + 实际调用）
-./scripts/dev.sh check-llm
-
-# 一键停止服务（仅停止由脚本启动的进程）
-./scripts/dev.sh stop
+# 改端口后重启（固定端口开发推荐）
+FRONTEND_PORT=3000 START_LTX2_SIDECAR=1 ./scripts/dev.sh restart
 ```
 
-#### 日志与运行文件
+**`dev.sh` 会做什么（摘要）**
+
+- 自检：`ss`、`curl`、`npm`；清理占用 **8000** 的旧 `uvicorn app.main:app`；清理占用 **`FRONTEND_PORT`**（默认 3000）的旧 Vite。
+- 后端 **优先使用 Conda 环境 `self-media` 内的 `uvicorn`**（常见路径如 `~/miniconda3/envs/self-media/bin/uvicorn`），避免 PATH 指到错误 Python 导致缺依赖（如 `sqlalchemy`）。
+- `START_LTX2_SIDECAR=1` 时：启动前会尝试释放 **9820** 上遗留的 LTX 侧车进程；启动 [`scripts/start_ltx2_t2v_sidecar.sh`](scripts/start_ltx2_t2v_sidecar.sh)（若存在 [`scripts/.env.ltx2`](scripts/.env.ltx2.example) 会自动 `source`）。
+- 启动后探测 `http://127.0.0.1:8000/health` 与关键路由，避免跑错目录的旧进程。
+
+**常用命令**
+
+| 命令 | 说明 |
+|------|------|
+| `./scripts/dev.sh start` | 启动（已在跑则跳过对应项） |
+| `./scripts/dev.sh restart` | 先 `stop` 再 `start` |
+| `./scripts/dev.sh stop` | 停止由脚本记录的进程（含 LTX 侧车） |
+| `./scripts/dev.sh status` | 查看 Redis / 后端 / Worker / 前端 / LTX 侧车是否在跑 |
+| `./scripts/dev.sh logs` | 打印日志目录与文件名 |
+| `./scripts/dev.sh tail` | 多路日志 `tail -f`（Ctrl+C 退出） |
+| `./scripts/dev.sh check-llm` | 检查默认 LLM 配置并试调用 |
+
+**环境变量（可选）**
+
+- `FRONTEND_PORT` — 前端端口（与 `frontend/vite.config.js` 一致，默认 3000）
+- `DEV_PROGRESS_INTERVAL` — `npm install` 等长步骤心跳间隔（秒）
+- `START_LTX2_SIDECAR=1` — 与 `dev.sh` 一同管理 LTX 侧车（9820）
+
+**运行产物**
 
 - 目录：`.devrun/`
-- PID 文件：`.devrun/pids/`
-- 日志文件：`.devrun/logs/`
-  - `backend.log`
-  - `worker.log`
-  - `frontend.log`
-  - `redis.log`（仅脚本拉起 Redis 时）
+- PID：`.devrun/pids/`（`backend.pid`、`worker.pid`、`frontend.pid`、`ltx2_sidecar.pid`、`redis.pid`）
+- 日志：`.devrun/logs/` — `backend.log`、`worker.log`、`frontend.log`、`ltx2_sidecar.log`（启用侧车时）、`redis.log`
 
-可直接使用以下命令查看实时日志：
+启动成功后：
+
+- 前端：<http://127.0.0.1:3000/>（或你设的 `FRONTEND_PORT`）
+- API 文档：<http://127.0.0.1:8000/docs>
+- 健康检查：`curl -s http://127.0.0.1:8000/health`
+
+### LTX-2：配置与调试（视频步走真实 Comfy / 口播兜底）
+
+**两套变量不要混用：**
+
+| 进程 | 配置位置 | 作用 |
+|------|----------|------|
+| **后端** | `backend/.env` 中 `LTX2_T2V_*` | 是否调用侧车、侧车 URL、超时与分辨率等 |
+| **侧车**（9820） | `scripts/.env.ltx2`（复制 `.env.ltx2.example`）或启动前 `export` | `LTX2_COMFYUI_URL` + `LTX2_COMFY_API_JSON` 才走 **Comfy 真 LTX**；否则降级口播兜底 |
+
+**推荐流程**
+
+1. 按 [`docs/LTX2_LOCAL.md`](docs/LTX2_LOCAL.md) 安装并启动 **ComfyUI**（默认 **8188**）；在 UI 里先 Queue 跑通 LTX 工作流。
+2. 按 [`scripts/ltx2/EXPORT_COMFY_API.md`](scripts/ltx2/EXPORT_COMFY_API.md) 导出 **API Format** JSON，把路径写入 `scripts/.env.ltx2`。
+3. `backend/.env`：`LTX2_T2V_ENABLED=true`，`LTX2_T2V_ENDPOINT=http://127.0.0.1:9820`。
+4. `START_LTX2_SIDECAR=1 ./scripts/dev.sh restart`（或单独运行 `./scripts/start_ltx2_t2v_sidecar.sh`）。
+
+**自检**
 
 ```bash
-tail -f .devrun/logs/backend.log
-tail -f .devrun/logs/worker.log
-tail -f .devrun/logs/frontend.log
+curl -s http://127.0.0.1:9820/health | python3 -m json.tool   # comfy_ready_for_real_ltx 应为 true 才走 Comfy
+curl -s http://127.0.0.1:8000/api/video/pipeline-env | python3 -m json.tool
 ```
 
-#### 常见问题排查
+**侧车排错**：侧车环境加 `LTX2_DEBUG=1` 再启动，看终端 / `ltx2_sidecar.log`；节点 id 与导出 JSON 不一致时设置 `LTX2_COMFY_NODE_*`（见 `EXPORT_COMFY_API.md`）。
 
-- `Cannot connect to redis://localhost:6379/0`
-  - Redis 未启动或端口被占用，先执行 `redis-cli -h localhost -p 6379 ping`，期待返回 `PONG`
-- `vite: not found`
-  - 前端依赖未安装，执行 `cd frontend && npm install`
-- `sqlite3.OperationalError: unable to open database file`
-  - 确保 `backend/data` 目录存在；脚本已自动处理，如手动启动请自行创建
-- `Address already in use`
-  - 端口冲突（常见 8000/3000/6379），先 `./scripts/dev.sh stop` 或结束占用进程；前端可设 `FRONTEND_PORT`
-- 启动时提示 `关键路由缺失` 或脚本生成仍 404
-  - 说明正在运行的后端不是最新代码版本（或运行目录错误）
-  - 执行 `./scripts/dev.sh stop && ./scripts/dev.sh start`，并确认 `status` 正常
-- 启动时提示 `端口 8000 被其他进程占用`
-  - 脚本仅会自动停止可识别的旧 uvicorn 进程
-  - 若是其他进程占用，请手动释放端口后重试
+完整契约与降级行为见 **[docs/LTX2_PIPELINE.md](docs/LTX2_PIPELINE.md)**。
 
-#### 注意事项
+### Wan2.1 图生视频侧车（可选）
 
-- `./scripts/dev.sh stop` 只会停止由该脚本记录 PID 的进程，不会影响你手动启动且未被脚本记录的其他进程
-- 若你已经手动启动了某项服务，脚本会尽量复用（或提示已在运行）
-- 生产环境请勿使用该脚本，生产部署请参考 [DEPLOYMENT.md](DEPLOYMENT.md)
+见 **[docs/WAN2.1_LOCAL.md](docs/WAN2.1_LOCAL.md)**。侧车需**单独终端**先起，再将生成的 `backend/.env.wan.generated` 合并进 `backend/.env`。
+
+### 镜像与网络（GitHub / Hugging Face）
+
+见 **[docs/MIRROR_SOURCES.md](docs/MIRROR_SOURCES.md)**（`HF_ENDPOINT`、`LTX2_GITHUB_MIRROR`、`git` 代理等）。
+
+### 手动分步启动（不用 `dev.sh` 时）
+
+```bash
+conda activate self-media
+# 使用当前环境下的 uvicorn，勿混用 base 或其它环境的 python
+cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 另开终端
+cd backend && celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low
+# 另开终端
+cd frontend && npm install && npm run dev
+```
+
+### 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| `Cannot connect to redis://localhost:6379` | `redis-cli -h localhost -p 6379 ping` 应返回 `PONG` |
+| `ModuleNotFoundError: No module named 'sqlalchemy'` | 确认已 `conda activate self-media`，且用该环境内的 `uvicorn`，或直接用 `./scripts/dev.sh start` |
+| `vite: not found` | `cd frontend && npm install` |
+| `Address already in use`（8000 / 3000 / 9820） | `./scripts/dev.sh stop` 后重试；或改 `FRONTEND_PORT`；9820 可检查是否有旧 `ltx2_t2v_sidecar` |
+| 关键路由检查失败 / 接口 404 | `./scripts/dev.sh stop && ./scripts/dev.sh restart`，确认在仓库根目录执行且代码为当前版本 |
+| LTX 一直是口播兜底 | 侧车未配 Comfy 或 Comfy 失败；看 `9820/health` 与 `pipeline-env`，并设 `LTX2_DEBUG=1` |
+
+生产环境请勿依赖 `dev.sh`；部署见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ## 文档
 
-| 文档 | 描述 |
+| 文档 | 说明 |
 |------|------|
-| [架构文档](ARCHITECTURE.md) | 系统架构设计说明 |
-| [部署指南](DEPLOYMENT.md) | 详细部署步骤和配置 |
-| [使用说明](USER_GUIDE.md) | API使用指南和示例 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 系统架构 |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | 部署与配置 |
+| [USER_GUIDE.md](USER_GUIDE.md) | 使用与 API 示例 |
+| [docs/LTX2_PIPELINE.md](docs/LTX2_PIPELINE.md) | LTX-2 侧车与视频步契约 |
+| [docs/LTX2_LOCAL.md](docs/LTX2_LOCAL.md) | 本地 Comfy + GGUF |
+| [docs/WAN2.1_LOCAL.md](docs/WAN2.1_LOCAL.md) | Wan2.1 侧车 |
+| [docs/MIRROR_SOURCES.md](docs/MIRROR_SOURCES.md) | 镜像与代理 |
+| [scripts/ltx2/README.md](scripts/ltx2/README.md) | LTX2 脚本索引 |
 
-## 项目结构
+## 项目结构（节选）
 
 ```
 self-media/
-├── backend/                 # 后端代码
-│   ├── app/
-│   │   ├── api/            # API路由
-│   │   ├── models/         # 数据模型
-│   │   ├── services/       # 业务服务
-│   │   ├── tasks/          # Celery任务
-│   │   ├── middleware/     # 中间件
-│   │   └── schemas/        # Pydantic模型
-│   ├── tests/              # 测试文件
-│   └── requirements.txt    # Python依赖
-├── frontend/               # 前端代码
-│   ├── src/
-│   └── pwa/               # PWA支持
-├── plugins/               # 插件目录
-│   └── material_sources/  # 素材源插件
-├── data/                  # 数据存储
-├── environment.yml        # Conda环境配置
-├── ARCHITECTURE.md        # 架构文档
-├── DEPLOYMENT.md          # 部署指南
-└── USER_GUIDE.md          # 使用说明
+├── backend/app/          # FastAPI：api、models、services、tasks、middleware
+├── frontend/src/         # React + Vite
+├── frontend/pwa/         # PWA 静态资源
+├── scripts/              # dev.sh、LTX/Wan 侧车与 Comfy 安装脚本
+├── plugins/material_sources/
+├── docs/                 # LTX、Wan、镜像等专题文档
+├── environment.yml       # Conda 环境（Python 3.11）
+├── .devrun/              # dev.sh 的 PID 与日志（本地生成，勿提交）
+└── third_party/          # 本地 Comfy/权重等（通常 .gitignore）
 ```
 
-## API概览
+## API 概览（节选）
 
-### 认证
+认证：`POST /api/auth/register`、`POST /api/auth/login`  
+项目：`/api/projects` CRUD 与批量操作  
+脚本：`POST /api/scripts/generate`  
+视频：`POST /api/video/*`，环境自检 `GET /api/video/pipeline-env`  
 
-```bash
-# 注册
-POST /api/auth/register
+更多路径以运行中的 **Swagger**（`/docs`）为准。
 
-# 登录
-POST /api/auth/login
-```
+## 配置（节选）
 
-### 项目管理
-
-```bash
-# 项目CRUD
-GET    /api/projects
-POST   /api/projects
-GET    /api/projects/{id}
-PUT    /api/projects/{id}
-DELETE /api/projects/{id}
-
-# 批量操作
-POST /api/projects/batch/delete
-POST /api/projects/batch/update-status
-```
-
-### 视频生成
-
-```bash
-# 生成脚本
-POST /api/scripts/generate
-
-# 收集素材
-POST /api/materials/collect
-
-# 生成视频
-POST /api/video/generate
-
-# 导出视频
-POST /api/video/export
-```
-
-### 其他功能
-
-```bash
-# 插件管理
-GET  /api/plugins
-POST /api/plugins/{id}/enable
-
-# Webhook管理
-GET  /api/webhooks
-POST /api/webhooks
-
-# 推荐系统
-GET /api/recommendations/topics
-
-# 移动端API
-GET /api/mobile/projects
-GET /api/mobile/dashboard
-```
-
-## 配置
-
-### 必需配置
-
-| 变量 | 描述 |
-|------|------|
-| `JWT_SECRET_KEY` | JWT签名密钥（生产环境必须修改） |
-| `SECRET_KEY` | 应用密钥 |
-
-### LLM配置
-
-| 变量 | 描述 |
-|------|------|
-| `ANTHROPIC_API_KEY` | Claude API密钥 |
-| `OPENAI_API_KEY` | OpenAI API密钥 |
-| `KIMI_API_KEY` | Kimi API密钥（Moonshot） |
-| `KIMI_BASE_URL` | Kimi 接口地址（默认 `https://api.moonshot.cn/v1`） |
-| `KIMI_MODEL` | Kimi 模型名（默认 `moonshot-v1-8k`） |
-| `DEFAULT_LLM_PROVIDER` | 默认LLM（claude/openai/kimi） |
-
-### TTS配置
-
-| 变量 | 描述 |
-|------|------|
-| `AZURE_SPEECH_KEY` | Azure语音服务密钥 |
-| `AZURE_SPEECH_REGION` | Azure服务区域 |
-| `ELEVENLABS_API_KEY` | ElevenLabs API密钥 |
+**安全**：`JWT_SECRET_KEY`、`SECRET_KEY`（生产必改）  
+**LLM**：`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`KIMI_*`、`DEFAULT_LLM_PROVIDER` 等（见 `backend/.env.example`）  
+**TTS**：`AZURE_SPEECH_*`、`ELEVENLABS_API_KEY` 等  
+**LTX 视频步**：`LTX2_T2V_*`（后端）；Comfy 相关变量在**侧车**环境或 `scripts/.env.ltx2`
 
 ## 开发
 
-### 运行测试
-
 ```bash
+conda activate self-media
 cd backend
 pytest tests/ -v
-```
 
-### 代码规范
-
-```bash
-# 格式化
+# 代码质量（与 CLAUDE.md 一致）
 black app/
-
-# 类型检查
 mypy app/
-
-# 代码检查
 ruff check app/
 ```
 
 ## 部署
 
-详见 [部署指南](DEPLOYMENT.md)
-
-### Docker部署
+详见 [DEPLOYMENT.md](DEPLOYMENT.md)。本地可试用：
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-### 生产部署
-
-```bash
-gunicorn app.main:app \
-    --workers 4 \
-    --worker-class uvicorn.workers.UvicornWorker \
-    --bind 0.0.0.0:8000
-```
+生产常用 Gunicorn + Uvicorn Worker（示例见 DEPLOYMENT.md）。
 
 ## 许可证
 
@@ -366,4 +246,4 @@ MIT License
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request。
+欢迎 Issue 与 Pull Request。

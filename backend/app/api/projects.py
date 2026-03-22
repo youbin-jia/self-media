@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel
 from datetime import datetime
 import time
@@ -31,7 +31,10 @@ from app.services.video_shot_timeline import (
     load_project_materials_for_video,
     visual_shots_from_project_meta,
     build_visual_shot_timeline,
+    build_ltx2_text_shot_timeline,
+    narration_lines_for_shots,
 )
+from app.services.ltx2_video import ltx2_t2v_available
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,7 @@ router = APIRouter()
 WORKFLOW_STEPS = ["script", "review", "visual", "audio", "video"]
 OUTLINE_LLM_TIMEOUT_SEC = 90
 FULL_SCRIPT_LLM_TIMEOUT_SEC = 150
+STEP_ACTIVITY_LOG_MAX = 400
 
 
 def _ensure_script_history_table(db: Session) -> None:
@@ -209,7 +213,8 @@ def _attach_audio_to_video(video_path: Path, audio_path: Path, output_path: Path
     mixed = None
     try:
         if audio_clip.duration > video_clip.duration:
-            audio_clip = audio_clip.subclip(0, video_clip.duration)
+            # MoviePy 2.x：AudioFileClip 使用 subclipped
+            audio_clip = audio_clip.subclipped(0, video_clip.duration)
         # MoviePy 2.x：使用 with_audio 替代已移除的 set_audio
         mixed = video_clip.with_audio(audio_clip)
         mixed.write_videofile(
@@ -238,7 +243,10 @@ def _set_step_progress(
     stage: Optional[str] = None,
     message: Optional[str] = None,
     output: Optional[dict] = None,
-    llm_call: Optional[dict] = None
+    llm_call: Optional[dict] = None,
+    reset_activity_log: bool = False,
+    log_append: Optional[Union[str, List[str]]] = None,
+    log_level: str = "info",
 ) -> None:
     """Persist real-time step progress so frontend can poll and render actual status."""
     def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -323,6 +331,22 @@ def _set_step_progress(
         if total_duration is not None:
             progress["total_duration_sec"] = total_duration
     progress["updated_at"] = now
+
+    # 活动日志：供前端视频步轮询展示（有上限，避免 metadata 膨胀）
+    if reset_activity_log or log_append is not None:
+        logs = [] if reset_activity_log else list(progress.get("activity_log") or [])
+        if log_append is not None:
+            lvl = str(log_level or "info").lower()[:16]
+            chunks = log_append if isinstance(log_append, list) else [log_append]
+            for raw in chunks:
+                text = str(raw).strip()
+                if not text:
+                    continue
+                logs.append({"at": now, "level": lvl, "message": text[:4000]})
+        if len(logs) > STEP_ACTIVITY_LOG_MAX:
+            logs = logs[-STEP_ACTIVITY_LOG_MAX :]
+        progress["activity_log"] = logs
+
     step["progress"] = progress
 
     steps[step_name] = step
@@ -332,9 +356,40 @@ def _set_step_progress(
     db.commit()
 
 
+def _append_step_activity_log(
+    project_id: str,
+    step_name: str,
+    message: str,
+    *,
+    level: str = "info",
+) -> None:
+    """独立 Session：线程或异步路径中追加步骤活动日志，并写一条标准 logger。"""
+    text = (message or "").strip()
+    if not text:
+        return
+    logger.info("[workflow activity] project=%s step=%s %s", project_id, step_name, text[:800])
+    sdb = SessionLocal()
+    try:
+        proj = sdb.query(Project).filter(Project.id == project_id).first()
+        if not proj:
+            return
+        meta = dict(proj.project_metadata or {})
+        _set_step_progress(
+            proj,
+            meta,
+            step_name,
+            sdb,
+            log_append=text,
+            log_level=level,
+        )
+    finally:
+        sdb.close()
+
+
 def _video_synth_progress_callback(project_id: str, step_name: str):
     """MoviePy / 时间轴处理期间节流写入步骤进度（独立 Session，避免阻塞主请求会话）。"""
     last_emit = [0.0, -1]
+    last_log_msg = [""]
 
     def cb(raw_percent: int, msg: str) -> None:
         now = time.monotonic()
@@ -347,6 +402,11 @@ def _video_synth_progress_callback(project_id: str, step_name: str):
             mapped = int(max(56, min(91, 56 + (rp - 25) * (35.0 / 65.0))))
         except Exception:
             mapped = 72
+        m = (msg or "视频合成中")[:220]
+        log_line = None
+        if m and m != last_log_msg[0]:
+            last_log_msg[0] = m
+            log_line = m[:900]
         sdb = SessionLocal()
         try:
             proj = sdb.query(Project).filter(Project.id == project_id).first()
@@ -361,7 +421,8 @@ def _video_synth_progress_callback(project_id: str, step_name: str):
                 status="processing",
                 percent=mapped,
                 stage="video_synthesizing",
-                message=(msg or "视频合成中")[:220],
+                message=m,
+                log_append=log_line,
             )
         finally:
             sdb.close()
@@ -389,6 +450,7 @@ def _video_shot_timeline_progress_factory(project_id: str, step_name: str):
                 percent=min(48, max(18, pct)),
                 stage="video_shot_timeline",
                 message=msg[:220],
+                log_append=msg[:900],
             )
         finally:
             sdb.close()
@@ -1238,35 +1300,65 @@ async def execute_project_step(
                 status="processing",
                 percent=15,
                 stage="video_loading",
-                message="正在读取素材与音频资源"
+                message="正在读取素材与音频资源",
+                reset_activity_log=True,
+                log_append="视频步骤开始：加载素材、分镜与口播配置",
             )
 
             project_meta = dict(project.project_metadata or {})
             materials = load_project_materials_for_video(db, project_id, project_meta)
             shots = visual_shots_from_project_meta(project_meta)
-            shot_stats: Optional[Dict[str, int]] = None
+            shot_stats: Optional[Dict[str, Any]] = None
             synthesis_mode = "materials_only"
             timeline: Optional[List[Dict[str, Any]]] = None
-
+            use_ltx2_t2v = False
             if shots:
-                _set_step_progress(
-                    project,
-                    metadata,
-                    step_name,
-                    db,
-                    status="processing",
-                    percent=35,
-                    stage="video_shot_timeline",
-                    message="按视觉规划组装分镜时间轴（切素材 / 生图）"
-                )
                 shot_cb = _video_shot_timeline_progress_factory(project_id, step_name)
-                timeline, shot_stats = await build_visual_shot_timeline(
-                    shots,
-                    materials,
-                    project_id=project_id,
-                    on_shot_progress=shot_cb,
-                )
-                synthesis_mode = "visual_shots"
+                if ltx2_t2v_available():
+                    _set_step_progress(
+                        project,
+                        metadata,
+                        step_name,
+                        db,
+                        status="processing",
+                        percent=35,
+                        stage="video_shot_timeline",
+                        message="LTX-2：按分镜与脚本口播生成音视频片段",
+                        log_append=[
+                            f"素材条目 {len(materials)}；分镜 {len(shots)}；进入 LTX-2 分镜生成",
+                        ],
+                    )
+                    narrations = narration_lines_for_shots(db, project_id, len(shots))
+                    timeline, shot_stats = await build_ltx2_text_shot_timeline(
+                        shots,
+                        narrations,
+                        project_id=project_id,
+                        on_shot_progress=shot_cb,
+                        on_activity_log=lambda m: _append_step_activity_log(
+                            project_id, step_name, m
+                        ),
+                    )
+                    synthesis_mode = "ltx2_text_shots"
+                    use_ltx2_t2v = True
+                else:
+                    _set_step_progress(
+                        project,
+                        metadata,
+                        step_name,
+                        db,
+                        status="processing",
+                        percent=35,
+                        stage="video_shot_timeline",
+                        message="按视觉规划组装分镜时间轴（切素材 / 生图）",
+                        log_append=f"未启用 LTX：走视觉时间轴（素材 {len(materials)}，分镜 {len(shots)}）",
+                    )
+                    timeline, shot_stats = await build_visual_shot_timeline(
+                        shots,
+                        materials,
+                        project_id=project_id,
+                        on_shot_progress=shot_cb,
+                    )
+                    synthesis_mode = "visual_shots"
             elif not materials:
                 raise ValueError("未找到可用素材，请先执行视觉规划或准备素材后再执行视频合成")
 
@@ -1280,14 +1372,20 @@ async def execute_project_step(
                 status="processing",
                 percent=55,
                 stage="video_synthesizing",
-                message="正在合成基础视频"
+                message="正在合成基础视频",
+                log_append=(
+                    f"MoviePy 拼接：时间轴 {len(timeline)} 段，素材合并 {len(materials)}"
+                    if timeline is not None and len(timeline) > 0
+                    else f"MoviePy 拼接：纯素材模式，素材 {len(materials)}"
+                ),
             )
             synth_progress = _video_synth_progress_callback(project_id, step_name)
             base_video_path = Path(synthesizer.synthesize(
                 project_id=project_id,
                 materials=materials,
                 progress_callback=synth_progress,
-                timeline=timeline
+                timeline=timeline,
+                log_callback=lambda m: _append_step_activity_log(project_id, step_name, m),
             )).resolve()
             if not base_video_path.exists():
                 raise ValueError("视频合成失败：未产出视频文件")
@@ -1296,7 +1394,11 @@ async def execute_project_step(
             audio_meta = project_meta.get("audio") if isinstance(project_meta.get("audio"), dict) else {}
             audio_path_value = audio_meta.get("path") or project_meta.get("audio_path")
             attached_audio = False
-            if audio_path_value:
+            skip_tts_overlay = (
+                use_ltx2_t2v
+                and getattr(settings, "LTX2_T2V_SKIP_EXTERNAL_TTS", True)
+            )
+            if audio_path_value and not skip_tts_overlay:
                 audio_path = Path(str(audio_path_value)).expanduser()
                 if not audio_path.is_absolute():
                     audio_path = (Path(settings.DATA_DIR) / audio_path).resolve()
@@ -1309,7 +1411,8 @@ async def execute_project_step(
                         status="processing",
                         percent=78,
                         stage="video_audio_mix",
-                        message="正在挂载音频轨道"
+                        message="正在挂载音频轨道",
+                        log_append=f"挂载外部 TTS 音轨：{audio_path.name}",
                     )
                     final_video_path = base_video_path.parent / f"{base_video_path.stem}_with_audio.mp4"
                     _attach_audio_to_video(base_video_path, audio_path, final_video_path)
@@ -1323,7 +1426,8 @@ async def execute_project_step(
                 status="processing",
                 percent=88,
                 stage="video_persisting",
-                message="正在保存视频结果"
+                message="正在保存视频结果",
+                log_append=f"写入项目元数据，成片路径已确定",
             )
             video_info = synthesizer.get_video_info(str(final_video_path))
             project_meta["video_path"] = str(final_video_path)
@@ -1339,6 +1443,10 @@ async def execute_project_step(
                 "synthesis_mode": synthesis_mode,
                 "shots_used": len(shots) if shots else 0,
                 "shot_timeline_stats": shot_stats,
+                "ltx2_t2v": use_ltx2_t2v,
+                "ltx2_skip_external_tts": bool(
+                    use_ltx2_t2v and getattr(settings, "LTX2_T2V_SKIP_EXTERNAL_TTS", True)
+                ),
             }
             project.project_metadata = project_meta
             db.commit()
@@ -1379,7 +1487,8 @@ async def execute_project_step(
             percent=100,
             stage="completed",
             message="处理完成",
-            output=output
+            output=output,
+            log_append="视频合成流程已全部完成" if step_name == "video" else None,
         )
 
         return {
@@ -1408,7 +1517,9 @@ async def execute_project_step(
                 output={
                     "error": str(exc),
                     "failed_at": datetime.now().isoformat()
-                }
+                },
+                log_append=f"失败：{str(exc)}",
+                log_level="error",
             )
         except Exception:
             pass

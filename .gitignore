@@ -36,6 +36,7 @@ env/
 # Environment variables
 .env
 .env.local
+scripts/.env.ltx2
 
 # Database
 *.db

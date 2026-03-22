@@ -6,7 +6,17 @@ import threading
 from typing import List, Dict, Any, Optional, Callable, Union
 from pathlib import Path
 # MoviePy 2.x imports
-from moviepy import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip, VideoClip, ColorClip
+from moviepy import (
+    ImageClip,
+    concatenate_videoclips,
+    VideoFileClip,
+    CompositeVideoClip,
+    AudioFileClip,
+    VideoClip,
+    ColorClip,
+    vfx,
+    afx,
+)
 
 from app.config import settings
 from app.utils.video_utils import VideoProcessor
@@ -75,10 +85,11 @@ class VideoSynthesizer:
         try:
             if _is_video_file(path):
                 v = VideoFileClip(path)
+                # MoviePy 2.x：subclip/loop 已移除，改用 subclipped / vfx.Loop
                 if v.duration < duration:
-                    v = v.loop(duration=duration)
+                    v = v.with_effects([vfx.Loop(duration=duration)])
                 else:
-                    v = v.subclip(0, duration)
+                    v = v.subclipped(0, duration)
                 return v
             return ImageClip(path, duration=duration)
         except Exception as e:
@@ -91,7 +102,8 @@ class VideoSynthesizer:
         materials: List[Dict[str, Any]],
         progress_callback: Optional[Callable[[int, str], None]] = None,
         *,
-        timeline: Optional[List[Dict[str, Any]]] = None
+        timeline: Optional[List[Dict[str, Any]]] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
         Synthesize video from materials (simplified image concatenation), or from
@@ -109,6 +121,13 @@ class VideoSynthesizer:
         Raises:
             ValueError: If no valid materials / timeline entries provided
         """
+        def _log(msg: str) -> None:
+            if log_callback:
+                try:
+                    log_callback(msg)
+                except Exception:
+                    pass
+
         use_timeline = timeline is not None and len(timeline) > 0
         if not use_timeline and not materials:
             raise ValueError("No materials provided for video synthesis")
@@ -125,11 +144,18 @@ class VideoSynthesizer:
         if use_timeline:
             if progress_callback:
                 progress_callback(25, "Loading visual shot timeline...")
+            _log(f"时间轴共 {len(timeline)} 段，开始载入 MoviePy 片段")
             total = len(timeline)
             for idx, item in enumerate(timeline):
                 clip = self._clip_from_timeline_item(item)
                 if clip is not None:
                     clips.append(clip)
+                    ph = "占位" if item.get("placeholder") else (item.get("path") or "")
+                    _log(f"片段 {idx + 1}/{total} 就绪（{'占位色块' if item.get('placeholder') else ph}）")
+                else:
+                    _log(
+                        f"片段 {idx + 1}/{total} 跳过：无法创建 clip（path={item.get('path')!r} placeholder={item.get('placeholder')})"
+                    )
                 if progress_callback:
                     progress = 25 + int((idx + 1) / max(total, 1) * 50)
                     progress_callback(progress, f"Processing shot {idx + 1}/{total}...")
@@ -170,6 +196,7 @@ class VideoSynthesizer:
         # Update progress
         if progress_callback:
             progress_callback(75, "Concatenating video clips...")
+        _log(f"有效片段 {len(clips)}，开始拼接与编码（libx264）")
 
         # Concatenate all clips
         final_video = concatenate_videoclips(clips, method="compose")
@@ -213,6 +240,11 @@ class VideoSynthesizer:
         # Update progress
         if progress_callback:
             progress_callback(100, "Video synthesis complete!")
+        try:
+            sz_kb = output_path.stat().st_size // 1024
+        except OSError:
+            sz_kb = 0
+        _log(f"编码完成：{output_path}（{sz_kb} KiB）")
 
         return str(output_path)
 
@@ -397,11 +429,9 @@ class VideoSynthesizer:
 
                 # Adjust clip duration
                 if clip.duration < target_duration:
-                    # Loop if too short
-                    clip = clip.loop(duration=target_duration)
+                    clip = clip.with_effects([vfx.Loop(duration=target_duration)])
                 else:
-                    # Trim if too long
-                    clip = clip.subclip(0, target_duration)
+                    clip = clip.subclipped(0, target_duration)
 
                 # Apply Ken Burns effect if enabled
                 if enable_ken_burns:
@@ -467,9 +497,11 @@ class VideoSynthesizer:
                     audio = AudioFileClip(audio_path)
                     # Adjust audio duration to match video
                     if audio.duration < final_video.duration:
-                        audio = audio.loop(duration=final_video.duration)
+                        audio = audio.with_effects(
+                            [afx.AudioLoop(duration=final_video.duration)]
+                        )
                     elif audio.duration > final_video.duration:
-                        audio = audio.subclip(0, final_video.duration)
+                        audio = audio.subclipped(0, final_video.duration)
                     final_video = final_video.with_audio(audio)
                 except Exception as e:
                     logger.warning(f"Failed to add audio: {e}")

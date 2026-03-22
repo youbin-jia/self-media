@@ -2,6 +2,7 @@
 """Video API Routes"""
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
@@ -15,6 +16,7 @@ from app.services.video_shot_timeline import (
     load_project_materials_for_video,
     visual_shots_from_project_meta,
 )
+from app.services.ltx2_video import ltx2_t2v_available
 
 router = APIRouter()
 
@@ -34,7 +36,7 @@ def _wan_ckpt_dir_populated(ckpt: str) -> bool:
 @router.get("/pipeline-env")
 async def get_video_pipeline_environment() -> Dict[str, Any]:
     """
-    返回视频合成 / 通义万相 Wan I2V 相关环境状态（不含密钥），供前端展示与自检。
+    返回视频合成 / LTX-2 T2V / 通义万相 Wan I2V 相关环境状态（不含密钥），供前端展示与自检。
     """
     from app.services.wan_video import wan_i2v_available
 
@@ -42,8 +44,40 @@ async def get_video_pipeline_environment() -> Dict[str, Any]:
     repo = getattr(settings, "WAN_I2V_REPO_DIR", None) or ""
     ckpt_ok = _wan_ckpt_dir_populated(ckpt)
     repo_ok = bool(repo and (Path(repo) / "generate.py").is_file())
+    ltx_on = bool(getattr(settings, "LTX2_T2V_ENABLED", False))
+    ltx_ready = ltx2_t2v_available()
+    ltx_ep = (getattr(settings, "LTX2_T2V_ENDPOINT", None) or "").strip().rstrip("/")
+    ltx_sidecar_health: Optional[Dict[str, Any]] = None
+    if ltx_ep:
+        health_url = f"{ltx_ep}/health"
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(health_url)
+            if resp.status_code == 200:
+                ltx_sidecar_health = resp.json()
+            else:
+                ltx_sidecar_health = {
+                    "error": "non_ok_status",
+                    "status_code": resp.status_code,
+                    "url": health_url,
+                }
+        except Exception as exc:
+            ltx_sidecar_health = {
+                "error": "unreachable",
+                "url": health_url,
+                "detail": str(exc)[:200],
+            }
 
     return {
+        "ltx2_t2v_enabled": ltx_on,
+        "ltx2_t2v_ready": ltx_ready,
+        "ltx2_endpoint_configured": bool(
+            (getattr(settings, "LTX2_T2V_ENDPOINT", None) or "").strip()
+        ),
+        "ltx2_resolution": f"{getattr(settings, 'LTX2_T2V_WIDTH', 1920)}x{getattr(settings, 'LTX2_T2V_HEIGHT', 1088)}",
+        "ltx2_fps": getattr(settings, "LTX2_T2V_FPS", 24),
+        "ltx2_skip_external_tts": getattr(settings, "LTX2_T2V_SKIP_EXTERNAL_TTS", True),
+        "ltx_sidecar_health": ltx_sidecar_health,
         "wan_i2v_enabled": bool(getattr(settings, "WAN_I2V_ENABLED", False)),
         "wan_i2v_ready": wan_i2v_available(),
         "wan_i2v_mode": getattr(settings, "WAN_I2V_MODE", "subprocess") or "subprocess",
@@ -60,14 +94,60 @@ async def get_video_pipeline_environment() -> Dict[str, Any]:
             wan_ready=wan_i2v_available(),
             ckpt_ok=ckpt_ok,
             repo_ok=repo_ok,
+            ltx_ready=ltx_ready,
+            ltx_enabled=ltx_on,
+            ltx_sidecar_health=ltx_sidecar_health,
         ),
     }
 
 
-def _pipeline_env_hints(*, wan_ready: bool, ckpt_ok: bool, repo_ok: bool) -> List[str]:
+def _pipeline_env_hints(
+    *,
+    wan_ready: bool,
+    ckpt_ok: bool,
+    repo_ok: bool,
+    ltx_ready: bool = False,
+    ltx_enabled: bool = False,
+    ltx_sidecar_health: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     hints: List[str] = []
+    if ltx_enabled and ltx_ready:
+        hints.append(
+            "LTX-2 文本生成音视频已就绪：有视觉分镜时将优先走 LTX 侧车（无需参考图），"
+            "不再使用通义 I2V / DALL·E 生图链路。"
+        )
+        if isinstance(ltx_sidecar_health, dict) and ltx_sidecar_health.get(
+            "comfy_ready_for_real_ltx"
+        ):
+            hints.append(
+                "侧车已配置 Comfy（comfy_ready_for_real_ltx=true）：将队列真实 LTX 工作流出片。"
+            )
+        elif isinstance(ltx_sidecar_health, dict) and ltx_sidecar_health.get("status") == "ok":
+            hints.append(
+                "侧车在线但未配齐 Comfy API JSON 时将使用口播兜底 MP4；"
+                "要跑 LTX2.0 模型请配置 LTX2_COMFYUI_URL 与 LTX2_COMFY_API_JSON 后重启侧车。"
+            )
+        elif isinstance(ltx_sidecar_health, dict) and ltx_sidecar_health.get(
+            "error"
+        ) == "non_ok_status":
+            hints.append("LTX 侧车 /health 返回非 200，请检查侧车进程与日志。")
+        elif isinstance(ltx_sidecar_health, dict) and ltx_sidecar_health.get("error"):
+            hints.append(
+                "无法访问 LTX 侧车 /health（3s 超时或网络错误），请确认侧车已启动且端口与 "
+                "LTX2_T2V_ENDPOINT 一致。"
+            )
+    elif ltx_enabled and not ltx_ready:
+        hints.append(
+            "LTX2_T2V_ENABLED 已开但未配置 LTX2_T2V_ENDPOINT，视频步无法调用 LTX；"
+            "请部署侧车（见 docs/LTX2_PIPELINE.md）。"
+        )
     if not getattr(settings, "WAN_I2V_ENABLED", False):
-        hints.append("WAN_I2V_ENABLED 未开启：分镜时间轴将使用静图/DALL·E，不走通义万相 I2V。")
+        if ltx_enabled and ltx_ready:
+            hints.append("WAN_I2V 未开启（可忽略）：视频步在含分镜时将走 LTX 侧车。")
+        else:
+            hints.append(
+                "WAN_I2V_ENABLED 未开启：分镜时间轴将使用静图/DALL·E，不走通义万相 I2V。"
+            )
         return hints
     mode = (getattr(settings, "WAN_I2V_MODE", None) or "subprocess").lower()
     if mode == "http":
@@ -90,6 +170,17 @@ def _pipeline_env_hints(*, wan_ready: bool, ckpt_ok: bool, repo_ok: bool) -> Lis
             "HTTP 模式：权重在「侧车」机器上配置即可；主 API 上的「权重目录未配」可忽略。"
         )
     return hints
+
+
+@router.get("/host-metrics")
+async def get_video_host_metrics() -> Dict[str, Any]:
+    """
+    返回本机 CPU/内存与 NVIDIA GPU 利用率（供视频合成页实时展示）。
+    依赖系统 `nvidia-smi`；无 GPU 时 gpus 为空列表。
+    """
+    from app.services.host_metrics import collect_host_metrics
+
+    return collect_host_metrics()
 
 
 class SynthesizeRequest(BaseModel):

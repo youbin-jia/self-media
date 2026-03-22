@@ -2,7 +2,7 @@
 
 **LTX-2**（Lightricks）是 DiT 架构的**音视频联合生成**模型：一次推理可产出**带画面 + 环境音/对白**的短片，支持高分辨率与多阶段放大。官方论文与权重说明见 [Lightricks/LTX-2](https://huggingface.co/Lightricks/LTX-2)、代码库 [github.com/Lightricks/LTX-2](https://github.com/Lightricks/LTX-2)。
 
-> **与本仓库关系**：当前自媒体后端流水线以 **脚本 + TTS + Wan I2V 拼接** 为主；**尚未内置 LTX-2 HTTP API**。本文档用于在你自己的 GPU 机器上部署；若需接入平台，可仿照 `scripts/wan_i2v_sidecar.py` 做「侧车」封装后再接 `backend`。
+> **与本仓库关系**：本地 ComfyUI 部署见下文；**视频合成已支持 LTX-2 文本生成音视频侧车**（无需参考图，优先于通义 I2V），配置见 **[docs/LTX2_PIPELINE.md](LTX2_PIPELINE.md)**。
 
 ---
 

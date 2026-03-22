@@ -37,4 +37,7 @@ export const regenerateStep = (projectId, stepName, data, axiosConfig = {}) =>
 /** 视频管线 / 通义万相 Wan I2V 环境（不含密钥） */
 export const getVideoPipelineEnv = () => api.get('/video/pipeline-env')
 
+/** 本机 CPU/内存/GPU 指标（视频页实时监控） */
+export const getVideoHostMetrics = () => api.get('/video/host-metrics', { timeout: 8000 })
+
 export default api

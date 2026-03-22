@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     WAN_I2V_EXTRA_ARGS: str = ""
     WAN_I2V_TIMEOUT_SEC: int = 7200
 
+    # LTX-2 文本生成音视频（HTTP 侧车，见 docs/LTX2_PIPELINE.md）。启用后视频步优先走 LTX，不依赖参考图、不走通义 I2V。
+    LTX2_T2V_ENABLED: bool = False
+    LTX2_T2V_ENDPOINT: Optional[str] = None
+    LTX2_T2V_HTTP_BEARER: Optional[str] = None
+    LTX2_T2V_TIMEOUT_SEC: int = 7200
+    # 输出分辨率（高宽须为 32 的倍数；1088≈1080p 类）
+    LTX2_T2V_WIDTH: int = 1920
+    LTX2_T2V_HEIGHT: int = 1088
+    LTX2_T2V_FPS: int = 24
+    # 为 True 时：使用 LTX 分镜合成后不再把「音频步」整轨 TTS 叠到成片上（避免与 LTX 内嵌对白重复）
+    LTX2_T2V_SKIP_EXTERNAL_TTS: bool = True
+
     # App Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"
     API_KEY: str = "your-api-key-change-in-production"

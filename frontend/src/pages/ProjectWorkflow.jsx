@@ -27,7 +27,7 @@ import {
 } from '../services/api'
 import AnimatedNumber from '../components/AnimatedNumber'
 import ReactMarkdown from 'react-markdown'
-import { FinalVideoPreviewPlugin, VideoPipelineEnvPlugin } from '../plugins/workflow'
+import { FinalVideoPreviewPlugin, VideoPipelineEnvPlugin, VideoGenerationMonitorPlugin } from '../plugins/workflow'
 
 const { Title, Paragraph } = Typography
 
@@ -1559,7 +1559,7 @@ function ProjectWorkflow() {
             </Space>
             {shotStats ? (
               <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-                分镜统计：素材 {shotStats.from_material ?? '-'} / 生图 {shotStats.generated ?? '-'} / I2V {shotStats.wan_i2v ?? '-'} / 占位 {shotStats.placeholder ?? '-'}
+                分镜统计：素材 {shotStats.from_material ?? '-'} / 生图 {shotStats.generated ?? '-'} / LTX2 {shotStats.ltx2_t2v ?? '-'} / I2V {shotStats.wan_i2v ?? '-'} / 占位 {shotStats.placeholder ?? '-'}
               </Paragraph>
             ) : null}
             {Array.isArray(shotStats?.diagnostics?.hints) && shotStats.diagnostics.hints.length > 0 ? (
@@ -1921,7 +1921,13 @@ function ProjectWorkflow() {
               ) : null}
               {step.key === 'video' ? (
                 <div className="human-output-wrap" style={{ marginBottom: 12 }}>
-                  <VideoPipelineEnvPlugin />
+                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                    <VideoPipelineEnvPlugin />
+                    <VideoGenerationMonitorPlugin
+                      activityLog={Array.isArray(progressMeta.activity_log) ? progressMeta.activity_log : []}
+                      pollFast={inFlight}
+                    />
+                  </Space>
                 </div>
               ) : null}
               {stepData ? (

@@ -1,7 +1,24 @@
 # LTX-2 部署脚本
 
 详细说明见 **[docs/LTX2_LOCAL.md](../../docs/LTX2_LOCAL.md)**。  
+**模板与 19B fp8 权重对齐、API 自检**：**[docs/LTX2_COMFY_TEMPLATE.md](../../docs/LTX2_COMFY_TEMPLATE.md)**。  
 **GitHub / Hugging Face 访问替代源**（镜像、代理、ZIP）：**[docs/MIRROR_SOURCES.md](../../docs/MIRROR_SOURCES.md)**。
+
+### 下载 fp8 / Gemma 等后：链接到 ComfyUI 目录
+
+集中放在 `third_party/ltx2/models/` 的大文件，执行一次即可出现在 ComfyUI 的下拉列表里：
+
+```bash
+chmod +x scripts/ltx2/link_ltx_models_to_comfy.sh
+./scripts/ltx2/link_ltx_models_to_comfy.sh
+```
+
+### 验证 ComfyUI HTTP API
+
+```bash
+chmod +x scripts/ltx2/verify_comfy_api.sh
+./scripts/ltx2/verify_comfy_api.sh
+```
 
 ## 快速下载 GGUF（Unsloth）
 
@@ -60,6 +77,8 @@ export LTX2_GIT_PREFIX=https://ghproxy.net
 启动 Web UI（默认端口 **8188**）：
 
 ```bash
+# 请在「仓库根目录」执行，不要用文档里的占位路径 /path/to/self-media
+cd ~/Code/self-media   # 换成你的实际路径
 ./scripts/ltx2/start_comfyui_ltx2.sh
 # 浏览器: http://127.0.0.1:8188
 ```
@@ -81,6 +100,15 @@ export LTX2_GIT_PREFIX=https://ghproxy.net
 - **帧数**：须为 **8n+1**，例如 **24fps → 241 帧 ≈10.04s**；**30fps → 305 帧 ≈10.17s**。
 
 详见 **[docs/LTX2_LOCAL.md](../../docs/LTX2_LOCAL.md)** 专节。
+
+## 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| `address already in use` / 端口 **8188** 被占 | **多半已有一个 ComfyUI 在跑**，直接打开 **http://127.0.0.1:8188**；要重启先查 PID：`ss -tlnp`，找 `:8188` 对应进程后 `kill`，或 `fuser -k 8188/tcp`。换端口：`LTX2_COMFY_PORT=8189 ./scripts/ltx2/start_comfyui_ltx2.sh` |
+| `Could not acquire lock on ... comfyui.db` | 同上：**不要同时开两个**共用同一 `ComfyUI/user` 的实例；关掉旧进程再启动。 |
+| `cd: /path/to/self-media: No such file` | 那是文档**占位符**，请 `cd` 到你本机真实路径（如 `~/Code/self-media`）。 |
+| `RequestsDependencyWarning`（urllib3/chardet） | 一般可忽略；若介意可在 `venv-comfyui` 里按 pip 提示对齐版本。 |
 
 ## 相关链接
 

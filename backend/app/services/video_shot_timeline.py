@@ -202,6 +202,159 @@ def ai_image_generation_available() -> bool:
         return False
 
 
+def shot_to_ltx2_prompt(shot: dict) -> str:
+    """LTX-2 文本生成视频：在分镜描述基础上强调音画、对白。"""
+    base = shot_to_image_prompt(shot)
+    extra = (
+        " 本镜头生成带同步对白的短视频片段；说话内容与下方口播文案一致，"
+        "自然语气，环境音合理，画面无角标水印。"
+    )
+    return (base + extra)[:2400]
+
+
+def narration_lines_for_shots(db: "Session", project_id: str, num_shots: int) -> List[str]:
+    """按脚本分段与分镜数量对齐，供 LTX 侧车作为口播/独白。"""
+    from app.models.script import Script
+
+    lines: List[str] = [""] * max(0, int(num_shots))
+    if num_shots <= 0:
+        return lines
+
+    script = (
+        db.query(Script)
+        .filter(Script.project_id == project_id)
+        .order_by(Script.created_at.desc())
+        .first()
+    )
+    if not script:
+        return lines
+
+    texts: List[str] = []
+    segments = script.segments if isinstance(script.segments, list) else []
+    for s in segments:
+        if isinstance(s, dict):
+            t = str(s.get("text") or "").strip()
+        else:
+            t = str(s).strip()
+        if t:
+            texts.append(t)
+
+    if not texts:
+        full = (script.full_script or "").strip()
+        if full:
+            parts = [p.strip() for p in full.split("\n\n") if p.strip()]
+            texts = parts if parts else [full]
+
+    if not texts:
+        return lines
+
+    for i in range(num_shots):
+        lines[i] = texts[i % len(texts)]
+    return lines
+
+
+async def build_ltx2_text_shot_timeline(
+    shots: List[dict],
+    narrations: List[str],
+    *,
+    project_id: Optional[str] = None,
+    on_shot_progress: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
+    on_activity_log: Optional[Callable[[str], None]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    无参考图：按分镜调用 LTX-2 侧车文本生成音视频，再拼接。
+    不走通义 I2V、不调用 DALL·E。
+    """
+    from app.services.ltx2_video import generate_ltx2_t2v_clip_async
+
+    stats: Dict[str, Any] = {
+        "from_material": 0,
+        "generated": 0,
+        "placeholder": 0,
+        "wan_i2v": 0,
+        "ltx2_t2v": 0,
+    }
+    timeline: List[Dict[str, Any]] = []
+    cache_dir = Path(settings.DATA_DIR) / "ltx2_t2v_cache" / (project_id or "default")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(shots)
+    w = int(getattr(settings, "LTX2_T2V_WIDTH", 1920) or 1920)
+    h = int(getattr(settings, "LTX2_T2V_HEIGHT", 1088) or 1088)
+    fps = int(getattr(settings, "LTX2_T2V_FPS", 24) or 24)
+
+    for idx, shot in enumerate(shots):
+        dur = float(shot.get("duration_sec") or 5)
+        dur = max(0.5, min(120.0, dur))
+        sn = shot.get("shot_no", idx + 1)
+        prompt = shot_to_ltx2_prompt(shot)
+        narr = ""
+        if idx < len(narrations):
+            narr = str(narrations[idx] or "").strip()
+
+        if on_shot_progress:
+            await on_shot_progress(
+                idx + 1,
+                total,
+                f"镜头 {sn}：LTX-2 文本生成音视频（含对白）…",
+            )
+
+        stem = f"{project_id or 'p'}_{idx}_{shot.get('shot_no', idx)}"
+        if on_activity_log:
+            on_activity_log(
+                f"镜头 {sn}（{idx + 1}/{total}）：请求 LTX 侧车，时长 {dur:.1f}s，"
+                f"分辨率 {w}x{h}@{fps}fps"
+            )
+        vp = await generate_ltx2_t2v_clip_async(
+            prompt=prompt,
+            narration=narr,
+            duration_sec=dur,
+            cache_dir=cache_dir,
+            stem=stem,
+            width=w,
+            height=h,
+            fps=fps,
+        )
+        if vp and os.path.isfile(vp):
+            stats["ltx2_t2v"] += 1
+            timeline.append({"path": vp, "duration_sec": dur})
+            if on_activity_log:
+                sz = os.path.getsize(vp)
+                on_activity_log(
+                    f"镜头 {sn}：侧车返回 OK，已缓存 {vp}（{sz // 1024} KiB）"
+                )
+            continue
+
+        stats["placeholder"] += 1
+        timeline.append({"duration_sec": dur, "placeholder": True})
+        if on_activity_log:
+            on_activity_log(
+                f"镜头 {sn}：LTX 未返回有效文件，使用占位片段（请查侧车/Comfy 日志）"
+            )
+
+    hints: List[str] = []
+    if total > 0 and stats.get("placeholder") == total:
+        hints.append(
+            "LTX-2 侧车未返回任何有效片段。请确认 LTX2_T2V_ENDPOINT 可访问、"
+            "侧车已实现 POST /generate，并查看后端日志。"
+        )
+    elif stats.get("ltx2_t2v", 0) > 0:
+        hints.append(
+            "已使用 LTX-2 生成含对白的分镜视频；若开启 LTX2_T2V_SKIP_EXTERNAL_TTS，"
+            "成片默认不再叠整条 TTS 音轨。"
+        )
+
+    stats["diagnostics"] = {
+        "pipeline": "ltx2_text_shots",
+        "ltx2_t2v_endpoint_configured": bool(
+            (getattr(settings, "LTX2_T2V_ENDPOINT", None) or "").strip()
+        ),
+        "wan_i2v_skipped": True,
+        "hints": hints,
+    }
+    return timeline, stats
+
+
 async def build_visual_shot_timeline(
     shots: List[dict],
     materials: List[dict],
@@ -220,6 +373,7 @@ async def build_visual_shot_timeline(
         "generated": 0,
         "placeholder": 0,
         "wan_i2v": 0,
+        "ltx2_t2v": 0,
     }
     timeline: List[Dict[str, Any]] = []
     can_gen = ai_image_generation_available()

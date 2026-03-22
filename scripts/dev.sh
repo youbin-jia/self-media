@@ -12,6 +12,7 @@ BACKEND_PID_FILE="$PID_DIR/backend.pid"
 WORKER_PID_FILE="$PID_DIR/worker.pid"
 FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
 REDIS_PID_FILE="$PID_DIR/redis.pid"
+LTX2_SIDECAR_PID_FILE="$PID_DIR/ltx2_sidecar.pid"
 
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
@@ -63,6 +64,10 @@ Usage:
 
 Wan2.1 I2V 侧车（可选）:
   见 docs/WAN2.1_LOCAL.md 与 ./scripts/wan2.1/start_wan_sidecar.sh
+
+LTX-2 文本视频侧车（可选，默认端口 9820）:
+  START_LTX2_SIDECAR=1 ./scripts/dev.sh start|restart
+  配置见 docs/LTX2_PIPELINE.md；Comfy 变量可写在 scripts/.env.ltx2
 EOF
 }
 
@@ -160,6 +165,32 @@ is_likely_vite_frontend() {
   return 1
 }
 
+precheck_ltx2_sidecar_port() {
+  [[ "${START_LTX2_SIDECAR:-0}" == "1" ]] || return 0
+  local port=9820
+  local pid
+  pid="$(get_pid_by_port "$port" || true)"
+  [[ -z "$pid" ]] && return 0
+  if is_pid_from_file "$LTX2_SIDECAR_PID_FILE" "$pid"; then
+    return 0
+  fi
+  local cmdline
+  cmdline="$(tr '\0' ' ' </proc/"$pid"/cmdline 2>/dev/null || true)"
+  if echo "$cmdline" | grep -qiE 'ltx2_t2v_sidecar|uvicorn.*9820'; then
+    echo "[precheck] 发现占用 ${port} 的旧 LTX 侧车进程，自动停止 (pid=$pid)"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    sleep 1
+    return 0
+  fi
+  echo "[precheck] 端口 ${port} 被非 LTX 侧车进程占用 (pid=$pid)"
+  echo "           请先释放端口，或不要与本机其它服务共用 9820"
+  return 1
+}
+
 precheck_frontend_port() {
   local port="$FRONTEND_PORT"
   local pid
@@ -212,6 +243,7 @@ run_prechecks() {
   require_cmd npm "请先安装 Node.js / npm"
   precheck_ports
   precheck_frontend_port
+  precheck_ltx2_sidecar_port
 }
 
 start_if_needed() {
@@ -304,17 +336,44 @@ ensure_redis() {
   return 1
 }
 
+# 优先使用 conda env「self-media」里的二进制，避免 PATH 上误用 base/用户 pip 的 uvicorn（缺 sqlalchemy 等）
+_self_media_env_bin() {
+  local name="$1"
+  local try
+  for try in \
+    "${HOME}/miniconda3/envs/self-media/bin/${name}" \
+    "${HOME}/miniforge3/envs/self-media/bin/${name}" \
+    "${HOME}/anaconda3/envs/self-media/bin/${name}" \
+    "${HOME}/mambaforge/envs/self-media/bin/${name}"; do
+    if [[ -x "$try" ]]; then
+      echo "$try"
+      return 0
+    fi
+  done
+  return 1
+}
+
 build_backend_cmd() {
+  local uv
+  if uv="$(_self_media_env_bin uvicorn)"; then
+    echo "\"$uv\" app.main:app --reload --host 0.0.0.0 --port 8000"
+    return 0
+  fi
   if command -v uvicorn >/dev/null 2>&1; then
-    echo "uvicorn app.main:app --reload"
+    echo "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
   elif command -v conda >/dev/null 2>&1; then
-    echo "conda run -n self-media uvicorn app.main:app --reload"
+    echo "conda run -n self-media uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
   else
     return 1
   fi
 }
 
 build_worker_cmd() {
+  local ce
+  if ce="$(_self_media_env_bin celery)"; then
+    echo "\"$ce\" -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low"
+    return 0
+  fi
   if command -v celery >/dev/null 2>&1; then
     echo "celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low"
   elif command -v conda >/dev/null 2>&1; then
@@ -371,17 +430,32 @@ do_start() {
   wait_for_http_ok "backend" "http://127.0.0.1:8000/health" 30
   verify_backend_routes
 
+  if [[ "${START_LTX2_SIDECAR:-0}" == "1" ]]; then
+    chmod +x "$ROOT_DIR/scripts/start_ltx2_t2v_sidecar.sh" 2>/dev/null || true
+    start_if_needed \
+      "ltx2_sidecar" \
+      "$LTX2_SIDECAR_PID_FILE" \
+      "$ROOT_DIR/scripts" \
+      "$LOG_DIR/ltx2_sidecar.log" \
+      bash -lc "./start_ltx2_t2v_sidecar.sh"
+    wait_for_http_ok "ltx2_sidecar" "http://127.0.0.1:9820/health" 20 || true
+  fi
+
   echo
   echo "启动完成："
   echo "  API      -> http://127.0.0.1:8000"
   echo "  Frontend -> http://127.0.0.1:${FRONTEND_PORT}/"
   echo "  日志目录 -> $LOG_DIR"
+  if [[ "${START_LTX2_SIDECAR:-0}" == "1" ]]; then
+    echo "  LTX侧车  -> http://127.0.0.1:9820/health （日志: $LOG_DIR/ltx2_sidecar.log）"
+  fi
 }
 
 do_stop() {
   stop_if_running "frontend" "$FRONTEND_PID_FILE"
   stop_if_running "worker" "$WORKER_PID_FILE"
   stop_if_running "backend" "$BACKEND_PID_FILE"
+  stop_if_running "ltx2_sidecar" "$LTX2_SIDECAR_PID_FILE"
   stop_if_running "redis" "$REDIS_PID_FILE"
 }
 
@@ -397,7 +471,8 @@ do_status() {
   for item in \
     "backend:$BACKEND_PID_FILE" \
     "worker:$WORKER_PID_FILE" \
-    "frontend:$FRONTEND_PID_FILE"
+    "frontend:$FRONTEND_PID_FILE" \
+    "ltx2_sidecar:$LTX2_SIDECAR_PID_FILE"
   do
     local_name="${item%%:*}"
     local_pid_file="${item##*:}"
@@ -420,6 +495,7 @@ do_tail() {
   [[ -f "$LOG_DIR/backend.log" ]] && files+=("$LOG_DIR/backend.log")
   [[ -f "$LOG_DIR/worker.log" ]] && files+=("$LOG_DIR/worker.log")
   [[ -f "$LOG_DIR/frontend.log" ]] && files+=("$LOG_DIR/frontend.log")
+  [[ -f "$LOG_DIR/ltx2_sidecar.log" ]] && files+=("$LOG_DIR/ltx2_sidecar.log")
   [[ -f "$LOG_DIR/redis.log" ]] && files+=("$LOG_DIR/redis.log")
 
   if [[ ${#files[@]} -eq 0 ]]; then

@@ -15,7 +15,10 @@ from app.services.video_shot_timeline import (
     load_project_materials_for_video,
     visual_shots_from_project_meta,
     build_visual_shot_timeline,
+    build_ltx2_text_shot_timeline,
+    narration_lines_for_shots,
 )
+from app.services.ltx2_video import ltx2_t2v_available
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +89,20 @@ def synthesize_video_task(
         )
 
         if shots:
-            timeline, _shot_stats = asyncio.run(
-                build_visual_shot_timeline(shots, materials, project_id=project_id)
-            )
+            if ltx2_t2v_available():
+                narr = narration_lines_for_shots(db, project_id, len(shots))
+                timeline, _shot_stats = asyncio.run(
+                    build_ltx2_text_shot_timeline(
+                        shots,
+                        narr,
+                        project_id=project_id,
+                        on_shot_progress=None,
+                    )
+                )
+            else:
+                timeline, _shot_stats = asyncio.run(
+                    build_visual_shot_timeline(shots, materials, project_id=project_id)
+                )
             if not materials:
                 synth_materials = []
 
