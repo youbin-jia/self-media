@@ -1,8 +1,9 @@
 # backend/app/tasks/video_tasks.py
 """Celery Tasks for Video Synthesis"""
 import os
+import asyncio
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from celery import current_task
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,11 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.project import Project
 from app.services.video_synthesizer import VideoSynthesizer
+from app.services.video_shot_timeline import (
+    normalize_materials_for_video,
+    visual_shots_from_project_meta,
+    build_visual_shot_timeline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,18 +69,28 @@ def synthesize_video_task(
         # Initialize video synthesizer
         synthesizer = VideoSynthesizer()
 
-        # Get materials from project metadata
-        metadata = project.project_metadata or {}
-        materials = metadata.get("materials", [])
+        # Get materials / visual shots from project metadata
+        metadata = dict(project.project_metadata or {})
+        materials = normalize_materials_for_video(metadata.get("materials"))
+        shots = visual_shots_from_project_meta(metadata)
+        timeline: Optional[List[Dict[str, Any]]] = None
+        synth_materials = materials
 
-        if not materials:
-            raise ValueError("No materials found in project metadata")
+        if not shots and not materials:
+            raise ValueError("No materials or visual shots found in project metadata")
 
         # Update progress: Processing
         current_task.update_state(
             state="PROGRESS",
-            meta={"progress": 20, "status": "Processing materials..."}
+            meta={"progress": 20, "status": "Building shot timeline..." if shots else "Processing materials..."}
         )
+
+        if shots:
+            timeline, _shot_stats = asyncio.run(
+                build_visual_shot_timeline(shots, materials, project_id=project_id)
+            )
+            if not materials:
+                synth_materials = []
 
         # Synthesize video with progress callback
         def progress_callback(progress: int, status: str):
@@ -84,11 +100,12 @@ def synthesize_video_task(
                 meta={"progress": progress, "status": status}
             )
 
-        # Create base video clip from materials
+        # Create base video clip from materials and/or visual timeline
         base_clip = synthesizer.synthesize(
             project_id=project_id,
-            materials=materials,
-            progress_callback=progress_callback
+            materials=synth_materials,
+            progress_callback=progress_callback,
+            timeline=timeline
         )
 
         # Export for each platform

@@ -22,6 +22,9 @@ Usage:
   ./scripts/dev.sh logs     # 查看日志路径
   ./scripts/dev.sh tail     # 实时查看服务日志（Ctrl+C 退出）
   ./scripts/dev.sh check-llm # 检查默认LLM配置与可用性
+
+Wan2.1 I2V 侧车（可选）:
+  见 docs/WAN2.1_LOCAL.md 与 ./scripts/wan2.1/start_wan_sidecar.sh
 EOF
 }
 

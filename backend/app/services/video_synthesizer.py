@@ -5,7 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional, Callable, Union
 from pathlib import Path
 # MoviePy 2.x imports
-from moviepy import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip, VideoClip
+from moviepy import ImageClip, concatenate_videoclips, VideoFileClip, CompositeVideoClip, AudioFileClip, VideoClip, ColorClip
 
 from app.config import settings
 from app.utils.video_utils import VideoProcessor
@@ -13,6 +13,12 @@ from app.services.effects.data_visualization import DataVisualizationEffect
 from app.services.effects.dynamic_subtitle import DynamicSubtitleEffect
 
 logger = logging.getLogger(__name__)
+
+_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+
+
+def _is_video_file(path: str) -> bool:
+    return Path(path).suffix.lower() in _VIDEO_EXTS
 
 
 class VideoSynthesizer:
@@ -49,27 +55,61 @@ class VideoSynthesizer:
         """Ensure videos directory exists"""
         self.videos_dir.mkdir(parents=True, exist_ok=True)
 
+    def _clip_from_timeline_item(self, item: Dict[str, Any]) -> Optional[VideoClip]:
+        """Build one MoviePy clip from a timeline dict (path + duration or placeholder)."""
+        duration = float(item.get("duration_sec") or 5)
+        duration = max(0.5, min(300.0, duration))
+
+        if item.get("placeholder"):
+            try:
+                return ColorClip(size=(1920, 1080), color=(28, 28, 36), duration=duration)
+            except Exception as e:
+                logger.warning(f"Failed to create placeholder clip: {e}")
+                return None
+
+        path = item.get("path")
+        if not path or not os.path.isfile(path):
+            return None
+
+        try:
+            if _is_video_file(path):
+                v = VideoFileClip(path)
+                if v.duration < duration:
+                    v = v.loop(duration=duration)
+                else:
+                    v = v.subclip(0, duration)
+                return v
+            return ImageClip(path, duration=duration)
+        except Exception as e:
+            logger.warning(f"Failed to create clip from {path}: {e}")
+            return None
+
     def synthesize(
         self,
         project_id: str,
         materials: List[Dict[str, Any]],
-        progress_callback: Optional[Callable[[int, str], None]] = None
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        *,
+        timeline: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """
-        Synthesize video from materials (simplified image concatenation)
+        Synthesize video from materials (simplified image concatenation), or from
+        an explicit per-shot ``timeline`` (visual plan: duration + local path / placeholder).
 
         Args:
             project_id: The project ID
             materials: List of material dictionaries with 'local_path' or 'source_url'
             progress_callback: Optional callback for progress updates
+            timeline: Optional list of {path, duration_sec, placeholder?} aligned to visual shots
 
         Returns:
             Path to the synthesized video file
 
         Raises:
-            ValueError: If no valid materials provided
+            ValueError: If no valid materials / timeline entries provided
         """
-        if not materials:
+        use_timeline = timeline is not None and len(timeline) > 0
+        if not use_timeline and not materials:
             raise ValueError("No materials provided for video synthesis")
 
         # Create project-specific output directory
@@ -79,38 +119,52 @@ class VideoSynthesizer:
         # Output video path
         output_path = project_video_dir / "output.mp4"
 
-        # Update progress
-        if progress_callback:
-            progress_callback(25, "Loading image materials...")
+        clips: List[VideoClip] = []
 
-        # Create video clips from materials
-        clips = []
-        total_materials = len(materials)
-
-        for idx, material in enumerate(materials):
-            # Get image path
-            image_path = material.get("local_path") or material.get("source_url")
-
-            if not image_path:
-                continue
-
-            # Check if it's a local file
-            if os.path.exists(image_path):
-                # Create image clip (5 seconds per image for Phase 1)
-                try:
-                    clip = ImageClip(image_path, duration=5)
+        if use_timeline:
+            if progress_callback:
+                progress_callback(25, "Loading visual shot timeline...")
+            total = len(timeline)
+            for idx, item in enumerate(timeline):
+                clip = self._clip_from_timeline_item(item)
+                if clip is not None:
                     clips.append(clip)
-                except Exception as e:
-                    logger.warning(f"Failed to create clip from {image_path}: {e}")
+                if progress_callback:
+                    progress = 25 + int((idx + 1) / max(total, 1) * 50)
+                    progress_callback(progress, f"Processing shot {idx + 1}/{total}...")
+        else:
+            # Update progress
+            if progress_callback:
+                progress_callback(25, "Loading image materials...")
+
+            total_materials = len(materials)
+
+            for idx, material in enumerate(materials):
+                # Get image path
+                image_path = material.get("local_path") or material.get("source_url")
+
+                if not image_path:
                     continue
 
-            # Update progress for each material processed
-            if progress_callback:
-                progress = 25 + int((idx + 1) / total_materials * 50)
-                progress_callback(progress, f"Processing material {idx + 1}/{total_materials}...")
+                # Check if it's a local file
+                if os.path.exists(image_path):
+                    # Create image clip (5 seconds per image for Phase 1)
+                    try:
+                        clip = ImageClip(image_path, duration=5)
+                        clips.append(clip)
+                    except Exception as e:
+                        logger.warning(f"Failed to create clip from {image_path}: {e}")
+                        continue
+
+                # Update progress for each material processed
+                if progress_callback:
+                    progress = 25 + int((idx + 1) / total_materials * 50)
+                    progress_callback(progress, f"Processing material {idx + 1}/{total_materials}...")
 
         if not clips:
-            raise ValueError("No valid image materials found for video synthesis")
+            raise ValueError(
+                "No valid clips for video synthesis (check materials paths or visual timeline)"
+            )
 
         # Update progress
         if progress_callback:

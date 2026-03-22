@@ -46,11 +46,30 @@ const stageLabelMap = {
   review_loading: '读取脚本',
   review_analyzing: '审核分析',
   review_persisting: '整理报告',
+  visual_loading: '读取脚本',
+  visual_planning: '生成视觉规划',
+  visual_structuring: '整理分镜结果',
+  audio_loading: '读取脚本',
+  audio_synthesizing: '生成配音音频',
+  audio_persisting: '保存音频结果',
+  video_loading: '读取素材',
+  video_synthesizing: '合成视频',
+  video_audio_mix: '挂载音频轨道',
+  video_persisting: '保存视频结果',
   persisting: '保存结果',
   fallback_generating: '离线占位生成',
   running: '执行中',
   completed: '已完成',
   failed: '执行失败'
+}
+
+const viralDimensionMeta = {
+  hook: { label: '开场钩子', max: 20 },
+  value_density: { label: '价值密度', max: 20 },
+  narrative_progression: { label: '叙事推进', max: 15 },
+  emotional_rhythm: { label: '情绪节奏', max: 15 },
+  credibility: { label: '可信合规', max: 15 },
+  cta_interaction: { label: '互动转化', max: 15 }
 }
 
 function ProjectWorkflow() {
@@ -911,6 +930,38 @@ function ProjectWorkflow() {
       const maxScore = trendData.length
         ? Math.max(...trendData.map((r) => Number(r.score) || 0), 1)
         : 1
+      const viralReview = output.metrics?.viral_template_review || {}
+      const viralDimensionsRaw = Array.isArray(viralReview.dimensions) ? viralReview.dimensions : []
+      const viralDimensions = viralDimensionsRaw.map((item) => {
+        const key = item?.key || ''
+        const meta = viralDimensionMeta[key] || { label: key || '未命名维度', max: 20 }
+        const score = Number(item?.score) || 0
+        return {
+          key,
+          label: meta.label,
+          max: meta.max,
+          score: Math.max(0, Math.min(meta.max, score)),
+          reason: item?.reason || ''
+        }
+      })
+      const getRadarPoint = (index, ratio, cx = 140, cy = 140, r = 100) => {
+        const angle = (-Math.PI / 2) + ((Math.PI * 2 * index) / Math.max(viralDimensions.length, 1))
+        const x = cx + Math.cos(angle) * r * ratio
+        const y = cy + Math.sin(angle) * r * ratio
+        return `${x.toFixed(2)},${y.toFixed(2)}`
+      }
+      const radarPolygonPoints = viralDimensions
+        .map((d, idx) => getRadarPoint(idx, d.max > 0 ? d.score / d.max : 0))
+        .join(' ')
+      const radarAxisPoints = viralDimensions
+        .map((_, idx) => getRadarPoint(idx, 1))
+      const scriptStep = project?.steps?.script || project?.metadata?.steps?.script
+      const reviewLlmInput = viralReview?.llm_input || {}
+      const allReviewPrompts = [
+        { key: 'outline', title: '脚本生成大纲 Prompt', text: scriptStep?.output?.llm_input?.outline_prompt || '' },
+        { key: 'full-script', title: '脚本生成完整脚本 Prompt', text: scriptStep?.output?.llm_input?.full_script_prompt || '' },
+        { key: 'review-instruction', title: '评审指令 Prompt（完整版）', text: reviewLlmInput?.review_instruction_prompt || reviewLlmInput?.prompt || '' }
+      ].filter((item) => String(item.text || '').trim())
       return (
         <div className="human-output-wrap">
           <Card
@@ -932,10 +983,109 @@ function ProjectWorkflow() {
               <Tag color={output.passed ? 'success' : 'error'}>
                 {output.passed ? '审核通过' : '审核未通过'}
               </Tag>
-              <Tag color="blue">评分：{output.score ?? 0}</Tag>
+              <Tag color="blue">评分：{formatScore(output.score)}</Tag>
               <Tag color="purple">等级：{output.grade || '-'}</Tag>
               <Tag color={issues.length ? 'warning' : 'success'}>问题数：{issues.length}</Tag>
+              {output.metrics?.scoring_mode ? <Tag color="cyan">模式：{output.metrics.scoring_mode}</Tag> : null}
+              {Number.isFinite(Number(output.metrics?.llm_score_100)) ? (
+                <Tag color="geekblue">LLM评分：{formatScore(output.metrics?.llm_score_100)}</Tag>
+              ) : null}
+              {Number.isFinite(Number(output.metrics?.rule_score_100)) ? (
+                <Tag color="purple">规则评分：{formatScore(output.metrics?.rule_score_100)}</Tag>
+              ) : null}
             </Space>
+            {viralDimensions.length ? (
+              <Card size="small" style={{ marginTop: 10 }} title="爆款模板六维评审（雷达/条形图）">
+                {viralReview.summary ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 10 }}
+                    message="模型评审结论"
+                    description={viralReview.summary}
+                  />
+                ) : null}
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  <svg width="300" height="300" viewBox="0 0 280 280" style={{ background: '#fafafa', borderRadius: 8 }}>
+                    <circle cx="140" cy="140" r="100" fill="none" stroke="#e5e7eb" />
+                    <circle cx="140" cy="140" r="75" fill="none" stroke="#e5e7eb" />
+                    <circle cx="140" cy="140" r="50" fill="none" stroke="#e5e7eb" />
+                    <circle cx="140" cy="140" r="25" fill="none" stroke="#e5e7eb" />
+                    {radarAxisPoints.map((point, idx) => (
+                      <line key={`axis-${idx}`} x1="140" y1="140" x2={point.split(',')[0]} y2={point.split(',')[1]} stroke="#d1d5db" />
+                    ))}
+                    {viralDimensions.map((d, idx) => {
+                      const p = radarAxisPoints[idx].split(',')
+                      return (
+                        <text
+                          key={`label-${d.key}-${idx}`}
+                          x={Number(p[0])}
+                          y={Number(p[1])}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize="10"
+                          fill="#475569"
+                        >
+                          {d.label}
+                        </text>
+                      )
+                    })}
+                    <polygon points={radarPolygonPoints} fill="rgba(99,102,241,0.28)" stroke="#6366f1" strokeWidth="2" />
+                  </svg>
+                  <div style={{ flex: 1, minWidth: 280 }}>
+                    <List
+                      size="small"
+                      dataSource={viralDimensions}
+                      renderItem={(item) => (
+                        <List.Item>
+                          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                            <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+                              <Typography.Text strong>{item.label}</Typography.Text>
+                              <Tag color="blue">{formatScore(item.score)} / {item.max}</Tag>
+                            </Space>
+                            <Progress
+                              percent={Math.round((item.score / Math.max(item.max, 1)) * 100)}
+                              size="small"
+                              showInfo={false}
+                            />
+                            {item.reason ? <Typography.Text type="secondary">{item.reason}</Typography.Text> : null}
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  </div>
+                </div>
+              </Card>
+            ) : null}
+            <Collapse
+              size="small"
+              style={{ marginTop: 10 }}
+              items={[
+                {
+                  key: 'review-llm-prompts',
+                  label: `大模型评审输入内容（含全部 Prompt，${allReviewPrompts.length}项）`,
+                  children: allReviewPrompts.length ? (
+                    <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                      {reviewLlmInput?.provider ? (
+                        <Space wrap>
+                          <Tag color="blue">评审模型提供商：{reviewLlmInput.provider}</Tag>
+                          {reviewLlmInput?.model ? <Tag color="purple">评审模型：{reviewLlmInput.model}</Tag> : null}
+                        </Space>
+                      ) : null}
+                      {allReviewPrompts.map((item) => (
+                        <Card key={item.key} size="small" title={item.title}>
+                          <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: 4, margin: 0, whiteSpace: 'pre-wrap' }}>
+                            {item.text}
+                          </pre>
+                        </Card>
+                      ))}
+                    </Space>
+                  ) : (
+                    <Alert type="info" showIcon message="暂无可展示的 Prompt 输入（可能是规则回退模式）" />
+                  )
+                }
+              ]}
+            />
             {visibleScoreChange ? (
               <Alert
                 style={{ marginTop: 10 }}
@@ -944,11 +1094,11 @@ function ProjectWorkflow() {
                 message="采纳 AI 修订后自动复审结果"
                 description={(
                   <Space wrap>
-                    <Tag color="default">采纳前：{visibleScoreChange.beforeScore ?? '-'}（{visibleScoreChange.beforeGrade || '-'}）</Tag>
-                    <Tag color="blue">采纳后：{visibleScoreChange.afterScore}（{visibleScoreChange.afterGrade || '-'}）</Tag>
+                    <Tag color="default">采纳前：{formatScore(visibleScoreChange.beforeScore)}（{visibleScoreChange.beforeGrade || '-'}）</Tag>
+                    <Tag color="blue">采纳后：{formatScore(visibleScoreChange.afterScore)}（{visibleScoreChange.afterGrade || '-'}）</Tag>
                     {visibleScoreChange.delta !== null ? (
                       <Tag color={visibleScoreChange.delta >= 0 ? 'success' : 'error'}>
-                        变化：{visibleScoreChange.delta >= 0 ? `+${visibleScoreChange.delta}` : visibleScoreChange.delta}
+                        变化：{visibleScoreChange.delta >= 0 ? `+${formatScore(visibleScoreChange.delta)}` : formatScore(visibleScoreChange.delta)}
                       </Tag>
                     ) : null}
                     <Tag>{formatDateTime(visibleScoreChange.updatedAt)}</Tag>
@@ -960,33 +1110,37 @@ function ProjectWorkflow() {
               <div style={{ marginTop: 10 }}>
                 <Paragraph strong style={{ marginBottom: 8 }}>评分趋势（最近 {trendData.length} 次）</Paragraph>
                 <Space wrap size={8} style={{ marginBottom: 8 }}>
-                  <Tag color="purple">最近：{trendData[trendData.length - 1]?.score}</Tag>
-                  <Tag color="success">最佳：{Math.max(...trendData.map((r) => Number(r.score) || 0))}</Tag>
+                  <Tag color="purple">最近：{formatScore(trendData[trendData.length - 1]?.score)}</Tag>
+                  <Tag color="success">最佳：{formatScore(Math.max(...trendData.map((r) => Number(r.score) || 0)))}</Tag>
                   <Tag>{trendData[trendData.length - 1]?.grade || '-'}</Tag>
                 </Space>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', minHeight: 56 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', minHeight: 74 }}>
                   {trendData.map((item, idx) => {
                     const score = Number(item.score) || 0
                     const h = Math.max(12, Math.round((score / maxScore) * 44))
                     return (
-                      <div
-                        key={`trend-${idx}-${item.at}`}
-                        title={`${formatDateTime(item.at)} | ${score}`}
-                        style={{
-                          width: 20,
-                          height: h,
-                          borderRadius: 6,
-                          background: idx === trendData.length - 1 ? 'linear-gradient(180deg, #818cf8, #6366f1)' : 'linear-gradient(180deg, #c7d2fe, #a5b4fc)',
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          justifyContent: 'center',
-                          color: '#fff',
-                          fontSize: 10,
-                          lineHeight: '12px',
-                          paddingTop: 2
-                        }}
-                      >
-                        {score}
+                      <div key={`trend-${idx}-${item.at}`} title={`${formatDateTime(item.at)} | ${formatScore(score)}`}>
+                        <Typography.Text
+                          style={{
+                            display: 'block',
+                            width: 38,
+                            textAlign: 'center',
+                            fontSize: 10,
+                            color: '#64748b',
+                            lineHeight: '12px',
+                            marginBottom: 2
+                          }}
+                        >
+                          {formatScore(score)}
+                        </Typography.Text>
+                        <div
+                          style={{
+                            width: 38,
+                            height: h,
+                            borderRadius: 6,
+                            background: idx === trendData.length - 1 ? 'linear-gradient(180deg, #818cf8, #6366f1)' : 'linear-gradient(180deg, #c7d2fe, #a5b4fc)'
+                          }}
+                        />
                       </div>
                     )
                   })}
@@ -1119,6 +1273,21 @@ function ProjectWorkflow() {
                 {aiRevisionCandidate.baseVersion ? <Tag color="geekblue">基线版本：v{aiRevisionCandidate.baseVersion}</Tag> : null}
                 {aiRevisionCandidate.generatedAt ? <Tag>候选生成：{formatDateTime(aiRevisionCandidate.generatedAt)}</Tag> : null}
               </Space>
+              <Collapse
+                size="small"
+                style={{ marginBottom: 10 }}
+                items={[
+                  {
+                    key: 'ai-revise-prompt',
+                    label: '查看发送给大模型的修订输入',
+                    children: (
+                      <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px', margin: 0, whiteSpace: 'pre-wrap' }}>
+                        {aiRevisionCandidate.llmInput?.prompt || ''}
+                      </pre>
+                    )
+                  }
+                ]}
+              />
               {aiRevisionCandidate.stale ? (
                 <Alert
                   type="warning"
@@ -1164,20 +1333,212 @@ function ProjectWorkflow() {
                         {aiRevisionCandidate.revised || ''}
                       </Paragraph>
                     )
-                  },
-                  {
-                    key: 'ai-revise-prompt',
-                    label: '查看发送给大模型的修订输入',
-                    children: (
-                      <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px', margin: 0, whiteSpace: 'pre-wrap' }}>
-                        {aiRevisionCandidate.llmInput?.prompt || ''}
-                      </pre>
-                    )
                   }
                 ]}
               />
             </Card>
           ) : null}
+        </div>
+      )
+    }
+
+    if (stepKey === 'visual') {
+      const shots = Array.isArray(output.shots) ? output.shots : []
+      return (
+        <div className="human-output-wrap">
+          <Card size="small" className="human-output-card" title="视觉规划概览">
+            <Space wrap>
+              <Tag color="blue">模式：{output.mode || '-'}</Tag>
+              {output.style_direction ? <Tag color="purple">风格：{output.style_direction}</Tag> : null}
+              {output.target_duration_sec ? <Tag color="geekblue">目标时长：{output.target_duration_sec}s</Tag> : null}
+              <Tag color={shots.length ? 'success' : 'warning'}>镜头数：{shots.length}</Tag>
+            </Space>
+            {output.summary ? (
+              <Paragraph style={{ marginTop: 10, marginBottom: 0 }}>{output.summary}</Paragraph>
+            ) : null}
+          </Card>
+          <Card size="small" className="human-output-card" title="镜头规划">
+            {shots.length ? (
+              <Collapse
+                size="small"
+                items={shots.map((item, idx) => ({
+                  key: `shot-${item.shot_no ?? idx}`,
+                  label: (
+                    <Space wrap>
+                      <Tag color="blue">镜头 {item.shot_no ?? idx + 1}</Tag>
+                      <Tag color="purple">{item.duration_sec ?? '-'}s</Tag>
+                      {item.transition ? <Tag>{item.transition}</Tag> : null}
+                    </Space>
+                  ),
+                  children: (
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      {item.objective ? <Typography.Text strong>{item.objective}</Typography.Text> : null}
+                      {item.visual_description ? <Typography.Text>{item.visual_description}</Typography.Text> : null}
+                      {item.camera_language ? <Typography.Text type="secondary">机位/运镜：{item.camera_language}</Typography.Text> : null}
+                      {item.on_screen_text ? <Typography.Text type="secondary">字幕：{item.on_screen_text}</Typography.Text> : null}
+                      {item.music_sfx ? <Typography.Text type="secondary">音乐音效：{item.music_sfx}</Typography.Text> : null}
+                      {Array.isArray(item.material_suggestion) && item.material_suggestion.length ? (
+                        <Space wrap>
+                          {item.material_suggestion.map((m, i) => (
+                            <Tag key={`${item.shot_no || 'shot'}-mat-${i}`}>{m}</Tag>
+                          ))}
+                        </Space>
+                      ) : null}
+                      {item.risk_note ? <Alert type="warning" showIcon message={item.risk_note} /> : null}
+                    </Space>
+                  )
+                }))}
+              />
+            ) : (
+              <Alert type="info" showIcon message={output.message || '暂未产出镜头规划'} />
+            )}
+          </Card>
+        </div>
+      )
+    }
+
+    if (stepKey === 'audio') {
+      const ttsInput = output.tts_input || {}
+      const ttsChunks = Array.isArray(ttsInput.chunks) ? ttsInput.chunks : []
+      return (
+        <div className="human-output-wrap">
+          <Card size="small" className="human-output-card" title="音频生成结果">
+            <Space wrap>
+              {output.provider ? <Tag color="blue">提供商：{output.provider}</Tag> : null}
+              {output.voice ? <Tag color="purple">音色：{output.voice}</Tag> : null}
+              {output.duration_sec ? <Tag color="geekblue">时长：{formatScore(output.duration_sec)}s</Tag> : null}
+              {output.truncated ? <Tag color="warning">文本已截断</Tag> : null}
+              {output.audio_path ? (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => {
+                    const downloadUrl = output.audio_download_url || `/api/projects/${id}/steps/audio/download`
+                    window.open(downloadUrl, '_blank')
+                  }}
+                >
+                  下载音频
+                </Button>
+              ) : null}
+            </Space>
+            {output.audio_path ? (
+              <div style={{ marginTop: 10 }}>
+                <Paragraph strong style={{ marginBottom: 6 }}>音频文件（绝对路径）</Paragraph>
+                <Typography.Text
+                  copyable={{ text: String(output.audio_path) }}
+                  style={{
+                    display: 'block',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: '#f5f5f5',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}
+                >
+                  {String(output.audio_path)}
+                </Typography.Text>
+              </div>
+            ) : null}
+            {output.message ? (
+              <Alert style={{ marginTop: 10 }} type="success" showIcon message={output.message} />
+            ) : null}
+            {(ttsInput.full_text || ttsChunks.length) ? (
+              <Collapse
+                size="small"
+                style={{ marginTop: 10 }}
+                items={[
+                  {
+                    key: 'audio-tts-input',
+                    label: `查看输入给 TTS 的内容（分段 ${ttsChunks.length}）`,
+                    children: (
+                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                        {ttsInput.full_text ? (
+                          <Card size="small" title="完整输入文本">
+                            <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px', margin: 0, whiteSpace: 'pre-wrap' }}>
+                              {ttsInput.full_text}
+                            </pre>
+                          </Card>
+                        ) : null}
+                        {ttsChunks.length ? (
+                          <Card size="small" title="分段输入列表">
+                            <List
+                              size="small"
+                              dataSource={ttsChunks}
+                              renderItem={(chunk, idx) => (
+                                <List.Item>
+                                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                                    <Tag color="blue">分段 {idx + 1}</Tag>
+                                    <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>
+                                      {String(chunk || '')}
+                                    </Typography.Text>
+                                  </Space>
+                                </List.Item>
+                              )}
+                            />
+                          </Card>
+                        ) : null}
+                      </Space>
+                    )
+                  }
+                ]}
+              />
+            ) : null}
+          </Card>
+        </div>
+      )
+    }
+
+    if (stepKey === 'video') {
+      const videoInfo = output.video_info || {}
+      return (
+        <div className="human-output-wrap">
+          <Card size="small" className="human-output-card" title="视频合成结果">
+            <Space wrap>
+              <Tag color="blue">模式：{output.mode || '-'}</Tag>
+              <Tag color="purple">素材数：{output.materials_count ?? 0}</Tag>
+              <Tag color={output.with_audio ? 'success' : 'warning'}>
+                {output.with_audio ? '已挂载音轨' : '未挂载音轨'}
+              </Tag>
+              {videoInfo.duration ? <Tag color="geekblue">时长：{formatScore(videoInfo.duration)}s</Tag> : null}
+              {(videoInfo.width && videoInfo.height) ? <Tag>{videoInfo.width}x{videoInfo.height}</Tag> : null}
+              {videoInfo.fps ? <Tag>{formatScore(videoInfo.fps)} fps</Tag> : null}
+              {output.video_path ? (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => {
+                    const downloadUrl = output.video_download_url || `/api/projects/${id}/steps/video/download`
+                    window.open(downloadUrl, '_blank')
+                  }}
+                >
+                  下载视频
+                </Button>
+              ) : null}
+            </Space>
+            {output.video_path ? (
+              <div style={{ marginTop: 10 }}>
+                <Paragraph strong style={{ marginBottom: 6 }}>视频文件（绝对路径）</Paragraph>
+                <Typography.Text
+                  copyable={{ text: String(output.video_path) }}
+                  style={{
+                    display: 'block',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: '#f5f5f5',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}
+                >
+                  {String(output.video_path)}
+                </Typography.Text>
+              </div>
+            ) : null}
+            {output.message ? (
+              <Alert style={{ marginTop: 10 }} type="success" showIcon message={output.message} />
+            ) : null}
+          </Card>
         </div>
       )
     }
@@ -1194,6 +1555,12 @@ function ProjectWorkflow() {
     const d = new Date(value)
     if (Number.isNaN(d.getTime())) return value
     return d.toLocaleString('zh-CN', { hour12: false })
+  }
+
+  const formatScore = (value) => {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return '-'
+    return n.toFixed(2)
   }
 
   const sourceLabelMap = {
@@ -1507,25 +1874,56 @@ function ProjectWorkflow() {
                                 const sec = toIntSeconds(item.duration_sec) ?? getElapsedSeconds(item.entered_at, item.exited_at) ?? 0
                                 const llmCall = llmCallByStage[item.stage]
                                 const llmSec = toIntSeconds(llmCall?.duration_sec)
+                                const stagePromptText = (
+                                  llmCall?.input
+                                  || (
+                                    step.key === 'visual'
+                                    && item.stage === 'visual_planning'
+                                    && String(stepData?.output?.llm_input?.prompt || '').trim()
+                                      ? String(stepData?.output?.llm_input?.prompt || '')
+                                      : ''
+                                  )
+                                )
+                                const hasStagePrompt = String(stagePromptText || '').trim().length > 0
+                                const hasModelCallTag = !!llmCall || (step.key === 'visual' && item.stage === 'visual_planning' && hasStagePrompt)
                                 return (
                                   <List.Item>
-                                    <Space wrap>
-                                      <Tag color={idx === stageTimeline.length - 1 && !item.exited_at ? 'processing' : 'default'}>
-                                        {getStageLabel(item.stage)}
-                                      </Tag>
-                                      {llmCall ? (
-                                        <Tag color={llmCall.success === false ? 'error' : 'cyan'}>
-                                          模型调用
+                                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                      <Space wrap>
+                                        <Tag color={idx === stageTimeline.length - 1 && !item.exited_at ? 'processing' : 'default'}>
+                                          {getStageLabel(item.stage)}
                                         </Tag>
-                                      ) : null}
-                                      <Typography.Text type="secondary">{formatDateTime(item.entered_at)}</Typography.Text>
-                                      <Typography.Text type="secondary">→</Typography.Text>
-                                      <Typography.Text type="secondary">{item.exited_at ? formatDateTime(item.exited_at) : '进行中'}</Typography.Text>
-                                      <Tag color="purple">阶段耗时 {sec}s</Tag>
-                                      {llmCall ? (
-                                        <Tag color={llmCall.success === false ? 'error' : 'geekblue'}>
-                                          模型耗时 {llmSec ?? 0}s
-                                        </Tag>
+                                        {hasModelCallTag ? (
+                                          <Tag color={llmCall?.success === false ? 'error' : 'cyan'}>
+                                            模型调用
+                                          </Tag>
+                                        ) : null}
+                                        <Typography.Text type="secondary">{formatDateTime(item.entered_at)}</Typography.Text>
+                                        <Typography.Text type="secondary">→</Typography.Text>
+                                        <Typography.Text type="secondary">{item.exited_at ? formatDateTime(item.exited_at) : '进行中'}</Typography.Text>
+                                        <Tag color="purple">阶段耗时 {sec}s</Tag>
+                                        {llmCall ? (
+                                          <Tag color={llmCall.success === false ? 'error' : 'geekblue'}>
+                                            模型耗时 {llmSec ?? 0}s
+                                          </Tag>
+                                        ) : null}
+                                      </Space>
+                                      {hasStagePrompt ? (
+                                        <Collapse
+                                          className="inner-collapse-panel"
+                                          size="small"
+                                          items={[
+                                            {
+                                              key: `llm-stage-prompt-${step.key}-${item.stage || idx}`,
+                                              label: '查看该阶段 Prompt',
+                                              children: (
+                                                <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                                  {stagePromptText}
+                                                </pre>
+                                              )
+                                            }
+                                          ]}
+                                        />
                                       ) : null}
                                     </Space>
                                   </List.Item>

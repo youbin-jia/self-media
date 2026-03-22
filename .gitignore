@@ -45,6 +45,15 @@ env/
 data/
 *.log
 
+# 本地开发脚本生成的 PID/日志（勿提交）
+.devrun/
+
+# Wan2.1 本地仓库与权重（由 scripts/wan2.1/setup_wan2.1.sh 生成）
+third_party/
+
+# 脚本生成的 Wan 环境片段（可手动合并进 backend/.env）
+backend/.env.wan.generated
+
 # Worktrees
 .worktrees/
 worktrees/

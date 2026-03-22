@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None
 
+    # Aliyun NLS TTS
+    ALIYUN_ACCESS_KEY_ID: Optional[str] = None
+    ALIYUN_ACCESS_KEY_SECRET: Optional[str] = None
+    ALIYUN_TTS_TOKEN: Optional[str] = None
+    ALIYUN_TTS_APP_KEY: Optional[str] = None
+    ALIYUN_TTS_REGION: str = "cn-shanghai"
+    ALIYUN_TTS_VOICE: str = "xiaoyun"
+
     # TTS配置
     DEFAULT_TTS_PROVIDER: str = "azure"
 
@@ -60,6 +68,20 @@ class Settings(BaseSettings):
 
     # AI Generation settings
     DEFAULT_AI_GENERATION_PROVIDER: str = "dalle"
+
+    # 通义万相 Wan2.1 图生视频（本地 generate.py 或 HTTP 侧车，见 docs/WAN2.1_LOCAL.md）
+    WAN_I2V_ENABLED: bool = False
+    # subprocess：在本机执行 Wan-Video/Wan2.1 的 generate.py | http：调用侧车
+    WAN_I2V_MODE: str = "subprocess"
+    WAN_I2V_ENDPOINT: Optional[str] = None
+    WAN_I2V_HTTP_BEARER: Optional[str] = None
+    WAN_I2V_REPO_DIR: Optional[str] = None
+    WAN_I2V_CKPT_DIR: Optional[str] = None
+    WAN_I2V_PYTHON: str = "python"
+    WAN_I2V_TASK: str = "i2v-14B"
+    WAN_I2V_SIZE: str = "1280*720"
+    WAN_I2V_EXTRA_ARGS: str = ""
+    WAN_I2V_TIMEOUT_SEC: int = 7200
 
     # App Settings
     SECRET_KEY: str = "your-secret-key-change-in-production"

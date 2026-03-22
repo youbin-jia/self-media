@@ -4,6 +4,7 @@ import threading
 from .base import BaseTTSProvider
 from .azure_tts import AzureTTSProvider
 from .elevenlabs_tts import ElevenLabsTTSProvider
+from .aliyun_tts import AliyunTTSProvider
 from app.config import settings
 
 
@@ -41,6 +42,21 @@ class TTSProviderManager:
                 api_key=elevenlabs_key
             )
 
+        # Aliyun NLS TTS (requires token + app key)
+        aliyun_token = getattr(settings, "ALIYUN_TTS_TOKEN", None)
+        aliyun_app_key = getattr(settings, "ALIYUN_TTS_APP_KEY", None)
+        aliyun_ak = getattr(settings, "ALIYUN_ACCESS_KEY_ID", None)
+        aliyun_sk = getattr(settings, "ALIYUN_ACCESS_KEY_SECRET", None)
+        if aliyun_app_key and (aliyun_token or (aliyun_ak and aliyun_sk)):
+            self._providers["aliyun"] = AliyunTTSProvider(
+                token=aliyun_token,
+                app_key=aliyun_app_key,
+                region=getattr(settings, "ALIYUN_TTS_REGION", "cn-shanghai"),
+                voice=getattr(settings, "ALIYUN_TTS_VOICE", "xiaoyun"),
+                access_key_id=aliyun_ak,
+                access_key_secret=aliyun_sk
+            )
+
     def get_provider(self, name: str) -> BaseTTSProvider:
         """获取指定TTS provider"""
         if name not in self._providers:
@@ -63,6 +79,7 @@ __all__ = [
     "BaseTTSProvider",
     "AzureTTSProvider",
     "ElevenLabsTTSProvider",
+    "AliyunTTSProvider",
     "TTSProviderManager",
     "tts_manager"
 ]

@@ -1,9 +1,13 @@
 # backend/app/services/quality_detector.py
 """Quality Detection Service for Script Analysis"""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from decimal import Decimal
+import json
+import re
 from app.schemas.script import ScriptSegment
 from app.schemas.quality import QualityReportBase
+from app.services.llm import llm_manager
+from app.config import settings
 
 # Import cv2 at module level for easier mocking in tests
 try:
@@ -34,6 +38,53 @@ class QualityDetector:
     # Optimal duration range (in seconds)
     OPTIMAL_DURATION_MIN = 60.0
     OPTIMAL_DURATION_MAX = 90.0
+    MAX_RULE_SCORE = 70.0
+
+    # Hybrid review weights (rule-based + LLM-based)
+    HYBRID_WEIGHTS = {
+        "rule": 0.4,
+        "llm": 0.6
+    }
+
+    # Viral short-video template rubric (inspired by hot-content structures)
+    VIRAL_TEMPLATE_DIMENSIONS = [
+        {
+            "key": "hook",
+            "name": "开场钩子",
+            "description": "前3-8秒是否有强冲突/反差/提问/利益点，能否抓住注意力",
+            "max_score": 20
+        },
+        {
+            "key": "value_density",
+            "name": "价值密度",
+            "description": "单位时间信息量、可执行建议、证据支撑是否充足",
+            "max_score": 20
+        },
+        {
+            "key": "narrative_progression",
+            "name": "叙事推进",
+            "description": "结构是否清晰，有无起承转合与阶段性高潮",
+            "max_score": 15
+        },
+        {
+            "key": "emotional_rhythm",
+            "name": "情绪与节奏",
+            "description": "情绪变化与节奏控制是否自然，有无疲劳段",
+            "max_score": 15
+        },
+        {
+            "key": "credibility",
+            "name": "可信度与合规",
+            "description": "观点是否有依据，是否避免绝对化夸大与潜在违规表达",
+            "max_score": 15
+        },
+        {
+            "key": "cta_interaction",
+            "name": "互动转化",
+            "description": "是否有有效的评论/收藏/关注/转发引导",
+            "max_score": 15
+        }
+    ]
 
     def __init__(self):
         self.script_weights = {
@@ -120,6 +171,85 @@ class QualityDetector:
             metrics=metrics,
             issues=issues,
             recommendations=recommendations
+        )
+
+    async def detect_script_quality_hybrid(
+        self,
+        full_script: str,
+        segments: List[ScriptSegment],
+        topic: Optional[str] = None
+    ) -> QualityReportBase:
+        """Hybrid review: deterministic rule score + LLM template review."""
+        rule_report = self.detect_script_quality(full_script, segments)
+        rule_raw_score = float(rule_report.overall_score or 0)
+        rule_score_100 = round((rule_raw_score / self.MAX_RULE_SCORE) * 100, 2) if self.MAX_RULE_SCORE > 0 else 0.0
+        review_prompt = self._build_llm_review_prompt(full_script=full_script, segments=segments, topic=topic)
+
+        llm_review = await self._llm_review_with_viral_templates(
+            full_script=full_script,
+            segments=segments,
+            topic=topic,
+            prompt=review_prompt
+        )
+        if llm_review is None:
+            # Backward-compatible fallback when no LLM is available.
+            fallback_grade = self._calculate_grade(Decimal(str(rule_score_100)))
+            merged_metrics = dict(rule_report.metrics or {})
+            merged_metrics["scoring_mode"] = "rule_only_fallback"
+            merged_metrics["rule_score_100"] = rule_score_100
+            merged_metrics["max_score"] = 100
+            merged_metrics["viral_template_review"] = {
+                "dimensions": [],
+                "summary": "当前为规则回退模式（大模型不可用或调用失败）",
+                "llm_input": {
+                    "provider": settings.DEFAULT_LLM_PROVIDER,
+                    "model": None,
+                    "prompt": review_prompt,
+                    "review_instruction_prompt": review_prompt,
+                    "template_dimensions": self.VIRAL_TEMPLATE_DIMENSIONS
+                }
+            }
+            return QualityReportBase(
+                report_type='script_quality',
+                overall_score=Decimal(str(round(rule_score_100, 2))),
+                grade=fallback_grade,
+                metrics=merged_metrics,
+                issues=rule_report.issues or [],
+                recommendations=rule_report.recommendations or []
+            )
+
+        llm_score = float(llm_review.get("overall_score", 0))
+        hybrid_score = round(
+            rule_score_100 * self.HYBRID_WEIGHTS["rule"] + llm_score * self.HYBRID_WEIGHTS["llm"],
+            2
+        )
+        hybrid_grade = self._calculate_grade(Decimal(str(hybrid_score)))
+
+        merged_issues = self._merge_issues(rule_report.issues or [], llm_review.get("issues", []))
+        merged_recommendations = self._merge_recommendations(
+            rule_report.recommendations or [],
+            llm_review.get("recommendations", [])
+        )
+
+        merged_metrics = dict(rule_report.metrics or {})
+        merged_metrics["scoring_mode"] = "hybrid_rule_llm"
+        merged_metrics["rule_score_raw"] = round(rule_raw_score, 2)
+        merged_metrics["rule_score_100"] = rule_score_100
+        merged_metrics["llm_score_100"] = round(llm_score, 2)
+        merged_metrics["hybrid_weights"] = self.HYBRID_WEIGHTS
+        merged_metrics["viral_template_review"] = {
+            "dimensions": llm_review.get("dimensions", []),
+            "summary": llm_review.get("summary", ""),
+            "llm_input": llm_review.get("llm_input", {})
+        }
+
+        return QualityReportBase(
+            report_type='script_quality',
+            overall_score=Decimal(str(hybrid_score)),
+            grade=hybrid_grade,
+            metrics=merged_metrics,
+            issues=merged_issues,
+            recommendations=merged_recommendations
         )
 
     def _calculate_density_score(
@@ -309,6 +439,166 @@ class QualityDetector:
                 return grade
 
         return 'E'
+
+    async def _llm_review_with_viral_templates(
+        self,
+        full_script: str,
+        segments: List[ScriptSegment],
+        topic: Optional[str] = None,
+        prompt: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Run LLM review against viral short-video template dimensions."""
+        try:
+            provider = llm_manager.get_provider(settings.DEFAULT_LLM_PROVIDER)
+        except Exception:
+            return None
+
+        review_prompt = prompt or self._build_llm_review_prompt(full_script=full_script, segments=segments, topic=topic)
+        try:
+            content = await provider.generate(review_prompt, max_tokens=1600, temperature=0.2)
+            parsed = self._parse_llm_review_json(content)
+            if not parsed:
+                return None
+            parsed["llm_input"] = {
+                "provider": provider.provider_name,
+                "model": getattr(provider, "default_model", None) or (provider.available_models[0] if provider.available_models else None),
+                "prompt": review_prompt,
+                "review_instruction_prompt": review_prompt,
+                "template_dimensions": self.VIRAL_TEMPLATE_DIMENSIONS
+            }
+            return parsed
+        except Exception:
+            return None
+
+    def _build_llm_review_prompt(
+        self,
+        full_script: str,
+        segments: List[ScriptSegment],
+        topic: Optional[str] = None
+    ) -> str:
+        """Build the full instruction prompt for LLM review."""
+        segment_count = len(segments or [])
+        total_duration = self._get_total_duration(segments or [])
+        dimensions_text = "\n".join([
+            f"- {d['name']}({d['key']}): {d['description']}，满分{d['max_score']}"
+            for d in self.VIRAL_TEMPLATE_DIMENSIONS
+        ])
+        return f"""你是短视频内容评审专家。请根据“网络火爆短视频模板”评审以下脚本。
+
+请按这些维度打分（总分100）：
+{dimensions_text}
+
+项目信息：
+- 主题：{topic or "未提供"}
+- 片段数：{segment_count}
+- 估算时长：{total_duration:.1f}秒
+
+待评审脚本：
+{full_script}
+
+请严格返回 JSON（不要 Markdown，不要解释）：
+{{
+  "overall_score": 0-100 的数字,
+  "summary": "一句话总体判断",
+  "dimensions": [
+    {{"key":"hook","score":0-20,"reason":"..."}},
+    {{"key":"value_density","score":0-20,"reason":"..."}},
+    {{"key":"narrative_progression","score":0-15,"reason":"..."}},
+    {{"key":"emotional_rhythm","score":0-15,"reason":"..."}},
+    {{"key":"credibility","score":0-15,"reason":"..."}},
+    {{"key":"cta_interaction","score":0-15,"reason":"..."}}
+  ],
+  "issues": [
+    {{"type":"hook","severity":"high|medium|low","message":"问题描述","score":0-100}}
+  ],
+  "recommendations": ["建议1","建议2","建议3"]
+}}
+"""
+
+    def _parse_llm_review_json(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse model JSON result with mild fault tolerance."""
+        if not content:
+            return None
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            data = json.loads(text)
+        except Exception:
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                return None
+            try:
+                data = json.loads(match.group(0))
+            except Exception:
+                return None
+
+        overall_score = float(data.get("overall_score", 0))
+        overall_score = max(0.0, min(100.0, overall_score))
+        dimensions = data.get("dimensions", [])
+        normalized_dimensions = []
+        if isinstance(dimensions, list):
+            for item in dimensions:
+                if not isinstance(item, dict):
+                    continue
+                normalized_dimensions.append({
+                    "key": item.get("key"),
+                    "score": float(item.get("score", 0)),
+                    "reason": str(item.get("reason", ""))
+                })
+
+        issues_raw = data.get("issues", [])
+        normalized_issues = []
+        if isinstance(issues_raw, list):
+            for item in issues_raw:
+                if not isinstance(item, dict):
+                    continue
+                normalized_issues.append({
+                    "type": item.get("type") or "llm_review",
+                    "severity": item.get("severity") or "medium",
+                    "message": item.get("message") or "模型识别到可优化项",
+                    "score": float(item.get("score", overall_score))
+                })
+
+        recommendations_raw = data.get("recommendations", [])
+        recommendations = [str(x) for x in recommendations_raw if str(x).strip()] if isinstance(recommendations_raw, list) else []
+
+        return {
+            "overall_score": round(overall_score, 2),
+            "summary": str(data.get("summary", "")),
+            "dimensions": normalized_dimensions,
+            "issues": normalized_issues,
+            "recommendations": recommendations
+        }
+
+    def _merge_recommendations(self, rule_items: List[str], llm_items: List[str]) -> List[str]:
+        merged: List[str] = []
+        for item in [*(rule_items or []), *(llm_items or [])]:
+            text = str(item).strip()
+            if text and text not in merged:
+                merged.append(text)
+        return merged[:8]
+
+    def _merge_issues(self, rule_items: List[Dict[str, Any]], llm_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen = set()
+        for item in [*(rule_items or []), *(llm_items or [])]:
+            if not isinstance(item, dict):
+                continue
+            message = str(item.get("message", "")).strip()
+            issue_type = str(item.get("type", "unknown")).strip()
+            key = f"{issue_type}:{message}"
+            if not message or key in seen:
+                continue
+            seen.add(key)
+            merged.append({
+                "type": issue_type or "unknown",
+                "severity": item.get("severity", "medium"),
+                "message": message,
+                "score": float(item.get("score", 0))
+            })
+        return merged[:12]
 
     def _generate_recommendations(
         self,

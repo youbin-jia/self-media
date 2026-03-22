@@ -1,13 +1,18 @@
 # backend/app/api/projects.py
 """Project API Routes"""
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 import time
 import asyncio
+import re
+import logging
+from pathlib import Path
+from moviepy import AudioFileClip, VideoFileClip, concatenate_audioclips
 
 from app.database import get_db
 from app.models.project import Project
@@ -19,6 +24,18 @@ from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.services.script_generator import ScriptGenerator
 from app.services.quality_detector import get_quality_detector
+from app.services.visual_planner import VisualPlanner
+from app.services.tts import tts_manager
+from app.services.video_synthesizer import VideoSynthesizer
+from app.services.video_shot_timeline import (
+    normalize_materials_for_video,
+    visual_shots_from_project_meta,
+    build_visual_shot_timeline,
+    ai_image_generation_available,
+)
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 WORKFLOW_STEPS = ["script", "review", "visual", "audio", "video"]
@@ -81,6 +98,133 @@ def _init_steps(project_metadata: Optional[dict]) -> dict:
 
     metadata["steps"] = steps
     return metadata
+
+
+def _split_text_for_tts(text: str, max_chars: int = 380) -> List[str]:
+    """Split long script text into TTS-friendly chunks by sentence boundaries."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not normalized:
+        return []
+
+    # Prefer sentence-level split in Chinese/English punctuation.
+    sentences = re.split(r"(?<=[。！？!?；;])\s*", normalized)
+    chunks: List[str] = []
+    current = ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        # Very long sentence fallback: hard split.
+        while len(sentence) > max_chars:
+            part = sentence[:max_chars]
+            sentence = sentence[max_chars:]
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(part)
+
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = sentence
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def _build_tts_clean_text(script_text: str) -> str:
+    """Extract narration-only text for TTS and remove production annotations."""
+    raw = str(script_text or "").replace("\r", "\n")
+    if not raw.strip():
+        return ""
+
+    # Prefer explicit narration lines if available.
+    narration_hits = re.findall(r"旁白[：:]\s*([^\n]+)", raw)
+    narration_lines = []
+    for line in narration_hits:
+        txt = str(line).strip().strip('"').strip("“”")
+        if txt:
+            narration_lines.append(txt)
+    if narration_lines:
+        return re.sub(r"\s+", " ", " ".join(narration_lines)).strip()
+
+    # Fallback: remove common production labels and metadata lines.
+    cleaned_lines: List[str] = []
+    skip_keywords = [
+        "镜头", "时长", "景别", "机位", "运镜", "画面与动作", "字幕", "音乐/音效",
+        "剪辑提示", "导演提示", "后期与剪辑建议", "封面", "目标受众", "核心卖点",
+        "情绪曲线", "对标账号风格关键词", "互动", "风险与合规", "素材建议"
+    ]
+    for raw_line in raw.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[\-•\d\.\)\(]+", "", line).strip()
+        if any(key in line for key in skip_keywords):
+            continue
+        # Remove bracket titles like 【视频定位】
+        line = re.sub(r"【[^】]{1,30}】", "", line).strip()
+        if len(line) < 4:
+            continue
+        cleaned_lines.append(line)
+
+    return re.sub(r"\s+", " ", " ".join(cleaned_lines)).strip()
+
+
+def _concat_audio_segments(segment_files: List[Path], output_file: Path) -> float:
+    """Merge multiple audio segment files into one and return total duration."""
+    if not segment_files:
+        raise ValueError("No audio segments to merge")
+    if len(segment_files) == 1:
+        segment_files[0].replace(output_file)
+        clip = AudioFileClip(str(output_file))
+        try:
+            return float(clip.duration or 0)
+        finally:
+            clip.close()
+
+    clips = [AudioFileClip(str(p)) for p in segment_files]
+    merged = concatenate_audioclips(clips)
+    try:
+        merged.write_audiofile(str(output_file), fps=44100, logger=None)
+        duration = float(merged.duration or 0)
+    finally:
+        for c in clips:
+            c.close()
+        merged.close()
+    for p in segment_files:
+        if p.exists():
+            p.unlink(missing_ok=True)
+    return duration
+
+
+def _attach_audio_to_video(video_path: Path, audio_path: Path, output_path: Path) -> float:
+    """Attach audio track to video and return final duration."""
+    video_clip = VideoFileClip(str(video_path))
+    audio_clip = AudioFileClip(str(audio_path))
+    mixed = None
+    try:
+        if audio_clip.duration > video_clip.duration:
+            audio_clip = audio_clip.subclip(0, video_clip.duration)
+        mixed = video_clip.set_audio(audio_clip)
+        mixed.write_videofile(
+            str(output_path),
+            fps=int(video_clip.fps or 24),
+            codec="libx264",
+            audio_codec="aac",
+            logger=None
+        )
+        return float(video_clip.duration or 0)
+    finally:
+        if mixed:
+            mixed.close()
+        audio_clip.close()
+        video_clip.close()
 
 
 def _set_step_progress(
@@ -790,7 +934,11 @@ async def execute_project_step(
             )
             detector = get_quality_detector()
             review_segments = _build_review_segments(script.full_script or "", script.segments if isinstance(script.segments, list) else [])
-            report = detector.detect_script_quality(script.full_script or "", review_segments)
+            report = await detector.detect_script_quality_hybrid(
+                script.full_script or "",
+                review_segments,
+                topic=project.topic_title or project.title
+            )
 
             issues = []
             for issue in (report.issues or []):
@@ -833,6 +981,309 @@ async def execute_project_step(
                 "recommendations": recommendations,
                 "metrics": report.metrics or {},
                 "reviewed_at": datetime.now().isoformat()
+            }
+        elif step_name == "visual":
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=20,
+                stage="visual_loading",
+                message="正在读取脚本并准备视觉规划"
+            )
+            script = db.query(Script).filter(Script.project_id == project_id).first()
+            if not script or not (script.full_script or "").strip():
+                raise ValueError("未找到可规划的完整脚本，请先执行脚本生成")
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=60,
+                stage="visual_planning",
+                message="正在生成分镜与视觉规划"
+            )
+            planner = VisualPlanner()
+            plan = await planner.generate_plan(
+                topic=project.topic_title or project.title,
+                outline=script.outline or "",
+                full_script=script.full_script or "",
+                segments=script.segments if isinstance(script.segments, list) else []
+            )
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=85,
+                stage="visual_structuring",
+                message="正在整理视觉规划结果"
+            )
+            output = {
+                "mode": plan.get("mode", "real_visual_plan"),
+                "topic": project.topic_title or project.title,
+                "summary": plan.get("summary", ""),
+                "style_direction": plan.get("style_direction", ""),
+                "target_duration_sec": plan.get("target_duration_sec"),
+                "shots_count": len(plan.get("shots") or []),
+                "shots": plan.get("shots") or [],
+                "llm_input": plan.get("llm_input") or {},
+                "planned_at": datetime.now().isoformat(),
+                "message": plan.get("message", "视觉规划已完成")
+            }
+            metadata["visual_plan"] = {
+                "shots": output.get("shots") or [],
+                "summary": output.get("summary", ""),
+                "style_direction": output.get("style_direction", ""),
+                "target_duration_sec": output.get("target_duration_sec"),
+                "planned_at": output.get("planned_at"),
+            }
+        elif step_name == "audio":
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=20,
+                stage="audio_loading",
+                message="正在读取脚本并准备配音"
+            )
+            script = db.query(Script).filter(Script.project_id == project_id).first()
+            if not script or not (script.full_script or "").strip():
+                raise ValueError("未找到可配音的完整脚本，请先执行脚本生成")
+
+            tts_text = _build_tts_clean_text(script.full_script or "")
+            if not tts_text:
+                tts_text = " ".join(str(script.full_script or "").split())
+            if not tts_text:
+                raise ValueError("脚本文本为空，无法生成音频")
+            text_chunks = _split_text_for_tts(tts_text, max_chars=380)
+            if not text_chunks:
+                raise ValueError("脚本文本为空，无法生成音频")
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=60,
+                stage="audio_synthesizing",
+                message="正在调用 TTS 生成配音"
+            )
+
+            provider_name = settings.DEFAULT_TTS_PROVIDER
+            provider = tts_manager.get_provider(provider_name)
+
+            audio_dir = (Path(settings.DATA_DIR) / "audio" / str(project_id)).resolve()
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            audio_file = audio_dir / f"voiceover_{int(time.time())}.mp3"
+            segment_dir = audio_dir / f"segments_{int(time.time())}"
+            segment_dir.mkdir(parents=True, exist_ok=True)
+            segment_files: List[Path] = []
+            tts_voice = None
+            tts_provider = provider_name
+            duration_sum = 0.0
+            for idx, chunk in enumerate(text_chunks, start=1):
+                seg_file = segment_dir / f"seg_{idx:03d}.mp3"
+                seg_result = await provider.synthesize(
+                    text=chunk,
+                    output_path=str(seg_file),
+                    language="zh-CN",
+                    speed=1.0
+                )
+                segment_files.append(seg_file)
+                tts_provider = seg_result.get("provider", tts_provider)
+                tts_voice = seg_result.get("voice", tts_voice)
+                duration_sum += float(seg_result.get("duration") or 0)
+                chunk_progress = 60 + int((idx / len(text_chunks)) * 20)
+                _set_step_progress(
+                    project,
+                    metadata,
+                    step_name,
+                    db,
+                    status="processing",
+                    percent=min(chunk_progress, 80),
+                    stage="audio_synthesizing",
+                    message=f"正在生成配音分段 {idx}/{len(text_chunks)}"
+                )
+
+            merged_duration = _concat_audio_segments(segment_files, audio_file)
+            if segment_dir.exists():
+                segment_dir.rmdir()
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=85,
+                stage="audio_persisting",
+                message="正在保存音频结果"
+            )
+            metadata = dict(project.project_metadata or {})
+            metadata["audio_path"] = str(audio_file.resolve())
+            metadata["audio"] = {
+                "path": str(audio_file.resolve()),
+                "provider": tts_provider,
+                "voice": tts_voice,
+                "duration_sec": round(merged_duration or duration_sum, 2),
+                "chunk_count": len(text_chunks),
+                "tts_input": {
+                    "source_mode": "narration_first_cleaned_text",
+                    "full_text": tts_text,
+                    "chunk_count": len(text_chunks),
+                    "chunks": text_chunks
+                },
+                "generated_at": datetime.now().isoformat()
+            }
+            project.project_metadata = metadata
+            db.commit()
+
+            output = {
+                "mode": "real_audio_synthesis",
+                "provider": tts_provider,
+                "voice": tts_voice,
+                "audio_path": str(audio_file.resolve()),
+                "audio_download_url": f"/api/projects/{project_id}/steps/audio/download",
+                "duration_sec": round(merged_duration or duration_sum, 2),
+                "chunk_count": len(text_chunks),
+                "text_length": len(tts_text),
+                "tts_input": {
+                    "source_mode": "narration_first_cleaned_text",
+                    "full_text": tts_text,
+                    "chunk_count": len(text_chunks),
+                    "chunks": text_chunks
+                },
+                "message": "音频生成完成"
+            }
+        elif step_name == "video":
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=15,
+                stage="video_loading",
+                message="正在读取素材与音频资源"
+            )
+
+            project_meta = dict(project.project_metadata or {})
+            materials = normalize_materials_for_video(project_meta.get("materials"))
+            shots = visual_shots_from_project_meta(project_meta)
+            shot_stats: Optional[Dict[str, int]] = None
+            synthesis_mode = "materials_only"
+            timeline: Optional[List[Dict[str, Any]]] = None
+
+            if shots:
+                _set_step_progress(
+                    project,
+                    metadata,
+                    step_name,
+                    db,
+                    status="processing",
+                    percent=35,
+                    stage="video_shot_timeline",
+                    message="按视觉规划组装分镜时间轴（切素材 / 生图）"
+                )
+                timeline, shot_stats = await build_visual_shot_timeline(
+                    shots, materials, project_id=project_id
+                )
+                synthesis_mode = "visual_shots"
+            elif not materials:
+                raise ValueError("未找到可用素材，请先执行视觉规划或准备素材后再执行视频合成")
+
+            synthesizer = VideoSynthesizer()
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=55,
+                stage="video_synthesizing",
+                message="正在合成基础视频"
+            )
+            base_video_path = Path(synthesizer.synthesize(
+                project_id=project_id,
+                materials=materials,
+                timeline=timeline
+            )).resolve()
+            if not base_video_path.exists():
+                raise ValueError("视频合成失败：未产出视频文件")
+
+            final_video_path = base_video_path
+            audio_meta = project_meta.get("audio") if isinstance(project_meta.get("audio"), dict) else {}
+            audio_path_value = audio_meta.get("path") or project_meta.get("audio_path")
+            attached_audio = False
+            if audio_path_value:
+                audio_path = Path(str(audio_path_value)).expanduser()
+                if not audio_path.is_absolute():
+                    audio_path = (Path(settings.DATA_DIR) / audio_path).resolve()
+                if audio_path.exists() and audio_path.is_file():
+                    _set_step_progress(
+                        project,
+                        metadata,
+                        step_name,
+                        db,
+                        status="processing",
+                        percent=78,
+                        stage="video_audio_mix",
+                        message="正在挂载音频轨道"
+                    )
+                    final_video_path = base_video_path.parent / f"{base_video_path.stem}_with_audio.mp4"
+                    _attach_audio_to_video(base_video_path, audio_path, final_video_path)
+                    attached_audio = True
+
+            _set_step_progress(
+                project,
+                metadata,
+                step_name,
+                db,
+                status="processing",
+                percent=88,
+                stage="video_persisting",
+                message="正在保存视频结果"
+            )
+            video_info = synthesizer.get_video_info(str(final_video_path))
+            project_meta["video_path"] = str(final_video_path)
+            project_meta["video"] = {
+                "path": str(final_video_path),
+                "with_audio": attached_audio,
+                "duration_sec": video_info.get("duration"),
+                "width": video_info.get("width"),
+                "height": video_info.get("height"),
+                "fps": video_info.get("fps"),
+                "size": video_info.get("size"),
+                "generated_at": datetime.now().isoformat(),
+                "synthesis_mode": synthesis_mode,
+                "shots_used": len(shots) if shots else 0,
+                "shot_timeline_stats": shot_stats,
+            }
+            project.project_metadata = project_meta
+            db.commit()
+
+            output = {
+                "mode": "real_video_synthesis",
+                "video_path": str(final_video_path),
+                "video_download_url": f"/api/projects/{project_id}/steps/video/download",
+                "materials_count": len(materials),
+                "with_audio": attached_audio,
+                "video_info": video_info,
+                "synthesis_mode": synthesis_mode,
+                "shots_used": len(shots) if shots else 0,
+                "shot_timeline_stats": shot_stats,
+                "message": "视频合成完成"
             }
         else:
             _set_step_progress(
@@ -903,3 +1354,63 @@ async def regenerate_project_step(
 ):
     """Regenerate a workflow step (same behavior as execute for now)."""
     return await execute_project_step(project_id=project_id, step_name=step_name, request=request, db=db)
+
+
+@router.get("/{project_id}/steps/audio/download")
+async def download_project_audio(
+    project_id: str,
+    db: Session = Depends(get_db)
+):
+    """Download generated audio file for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    metadata = dict(project.project_metadata or {})
+    audio_meta = metadata.get("audio") if isinstance(metadata.get("audio"), dict) else {}
+    audio_path_value = audio_meta.get("path") or metadata.get("audio_path")
+    if not audio_path_value:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    audio_path = Path(str(audio_path_value)).expanduser()
+    if not audio_path.is_absolute():
+        audio_path = (Path(settings.DATA_DIR) / audio_path).resolve()
+
+    if not audio_path.exists() or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    return FileResponse(
+        path=str(audio_path),
+        media_type="audio/mpeg",
+        filename=audio_path.name
+    )
+
+
+@router.get("/{project_id}/steps/video/download")
+async def download_project_video(
+    project_id: str,
+    db: Session = Depends(get_db)
+):
+    """Download generated video file for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    metadata = dict(project.project_metadata or {})
+    video_meta = metadata.get("video") if isinstance(metadata.get("video"), dict) else {}
+    video_path_value = video_meta.get("path") or metadata.get("video_path")
+    if not video_path_value:
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    video_path = Path(str(video_path_value)).expanduser()
+    if not video_path.is_absolute():
+        video_path = (Path(settings.DATA_DIR) / video_path).resolve()
+
+    if not video_path.exists() or not video_path.is_file():
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    return FileResponse(
+        path=str(video_path),
+        media_type="video/mp4",
+        filename=video_path.name
+    )

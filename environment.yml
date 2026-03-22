@@ -37,6 +37,7 @@ dependencies:
     - celery>=5.3.6
     - anthropic>=0.18.1
     - openai>=1.12.0
+    - aliyun-python-sdk-core>=2.16.0
     - azure-cognitiveservices-speech>=1.34.0
     - librosa>=0.10.1
     - moviepy>=2.0.0

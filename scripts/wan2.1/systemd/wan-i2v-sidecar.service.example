@@ -1,0 +1,16 @@
+[Unit]
+Description=Wan2.1 I2V HTTP Sidecar (self-media)
+After=network.target
+
+[Service]
+Type=simple
+# 改为你的登录用户，避免 root 写缓存权限问题
+User=YOUR_USER
+WorkingDirectory=/ABS/PATH/TO/self-media
+# 使用仓库内启动脚本（内部 source third_party/wan2.1/wan.runtime.env）
+ExecStart=/ABS/PATH/TO/self-media/scripts/wan2.1/start_wan_sidecar.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -86,6 +86,8 @@ backend/app/
 
 **Video Generation Pipeline**: Topic → Script → Materials → Video Synthesis → Export
 
+**Wan2.1 I2V (optional, local)**: Image-to-video via Tongyi Wan; configured with `WAN_I2V_*` in `backend/.env`. Deploy scripts: `scripts/wan2.1/setup_wan2.1.sh`, `start_wan_sidecar.sh`. Full guide: `docs/WAN2.1_LOCAL.md`.
+
 **Plugin System**: Extensible material sources via plugins in `plugins/material_sources/`. Inherit from `MaterialSourcePlugin` base class.
 
 ### Configuration
