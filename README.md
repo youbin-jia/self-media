@@ -103,7 +103,7 @@ chmod +x scripts/dev.sh
   - 前端使用 Vite `strictPort: true`，端口被非 Vite 进程占用时会中断启动并提示处理
 - 若 `backend/.env` 不存在，则由 `backend/.env.example` 自动生成
 - 自动创建 `backend/data` 目录（避免 SQLite 文件路径报错）
-- 前端缺少依赖时自动执行 `npm install`
+- 前端缺少依赖时自动执行 `npm install`（长耗时时会周期性打印已耗时，可用 `DEV_PROGRESS_INTERVAL` 调整间隔，见 `./scripts/dev.sh` 帮助）
 - 启动并托管以下进程：
   - `uvicorn app.main:app --reload`
   - `celery -A app.tasks.celery_app worker --loglevel=info -Q high,medium,low`

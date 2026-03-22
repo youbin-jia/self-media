@@ -15,6 +15,37 @@ REDIS_PID_FILE="$PID_DIR/redis.pid"
 
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
+# npm install 等长步骤：周期性输出已耗时，便于判断是否卡住或 Ctrl+C 取消
+DEV_PROGRESS_INTERVAL="${DEV_PROGRESS_INTERVAL:-20}"
+
+dev_run_long_step() {
+  local phase="$1"
+  shift
+  local start hb_pid rc interval elapsed
+  interval="${DEV_PROGRESS_INTERVAL}"
+  start=$(date +%s)
+  echo "[dev] ━━ 开始: ${phase}（Ctrl+C 可中止；约每 ${interval}s 提示已耗时）"
+  (
+    while true; do
+      sleep "${interval}" || exit 0
+      elapsed=$(($(date +%s) - start))
+      echo "[dev] ⏳ ${phase} … 仍在执行，已 ${elapsed}s" >&2
+    done
+  ) &
+  hb_pid=$!
+  rc=0
+  "$@" || rc=$?
+  kill "${hb_pid}" 2>/dev/null || true
+  wait "${hb_pid}" 2>/dev/null || true
+  elapsed=$(($(date +%s) - start))
+  if [[ "${rc}" -eq 0 ]]; then
+    echo "[dev] ━━ 完成: ${phase}（耗时 ${elapsed}s）"
+  else
+    echo "[dev] ━━ 失败: ${phase}（耗时 ${elapsed}s，退出码 ${rc}）" >&2
+  fi
+  return "${rc}"
+}
+
 print_usage() {
   cat <<EOF
 Usage:
@@ -28,6 +59,7 @@ Usage:
 
 环境变量:
   FRONTEND_PORT=${FRONTEND_PORT}  # 前端端口（默认 3000），与 frontend/vite.config.js 一致
+  DEV_PROGRESS_INTERVAL=${DEV_PROGRESS_INTERVAL}  # npm install 等长步骤心跳间隔（秒），默认 20
 
 Wan2.1 I2V 侧车（可选）:
   见 docs/WAN2.1_LOCAL.md 与 ./scripts/wan2.1/start_wan_sidecar.sh
@@ -238,8 +270,8 @@ ensure_backend_env() {
 
 ensure_frontend_deps() {
   if [[ ! -x "$ROOT_DIR/frontend/node_modules/.bin/vite" ]]; then
-    echo "[frontend] 正在安装依赖 npm install ..."
-    (cd "$ROOT_DIR/frontend" && npm install)
+    echo "[frontend] 正在安装依赖（npm install，日志较详细属正常）…"
+    dev_run_long_step "npm install（frontend）" bash -lc "cd \"$ROOT_DIR/frontend\" && npm install --progress=true --loglevel=notice"
   fi
 }
 

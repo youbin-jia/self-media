@@ -41,3 +41,10 @@
 
 - `HF_TOKEN`：Hugging Face 令牌（部分模型/限速时需要）
 - `WAN_HF_REPO`：默认 `Wan-AI/Wan2.1-I2V-14B-720P`
+- `WAN_SETUP_PROGRESS_INTERVAL`：克隆 / pip / 下载权重等长步骤的心跳间隔（秒），默认 `15`，便于判断是否卡住或 `Ctrl+C` 取消
+- **默认**：若 PATH 中 **没有 `nvcc`**，会自动跳过 `flash_attn` 并完成 venv（与仅装 PyTorch CUDA 轮子的机器常见情况一致）
+- `WAN_SKIP_FLASH_ATTN=1`：显式跳过 `flash_attn`
+- `WAN_REQUIRE_FLASH_ATTN=1`：必须有 `nvcc` 且 flash_attn 安装成功，否则脚本失败
+- `WAN_TORCH_INDEX_URL`：例如 `https://download.pytorch.org/whl/cu124`，用于安装与显卡匹配的 PyTorch CUDA 轮子
+
+若 `pip install flash_attn` 报 **`ModuleNotFoundError: No module named 'torch'`**，请拉取最新脚本后重跑 `./scripts/wan2.1/setup_wan2.1.sh venv`（脚本已先装 torch 再装 flash_attn）。

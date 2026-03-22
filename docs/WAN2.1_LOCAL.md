@@ -106,6 +106,36 @@ curl -s http://127.0.0.1:9810/health
 | `WAN_HF_REPO` | 默认 `Wan-AI/Wan2.1-I2V-14B-720P` |
 | `WAN_SIDECAR_PORT` | 侧车端口，默认 `9810` |
 | `WAN_AUTO_DOWNLOAD=1` | 与 `all` 联用时自动执行 `download`（慎用） |
+| `WAN_SETUP_PROGRESS_INTERVAL` | 长步骤（git/pip/huggingface 下载）心跳间隔（秒），默认 `15`，终端会周期性打印「仍在执行 + 已耗时」，便于判断是否取消 |
+| `WAN_SKIP_FLASH_ATTN=1` | 显式跳过 `flash_attn` |
+| （默认） | **未检测到 `nvcc` 时自动跳过 `flash_attn`**，venv 仍会完成；仅装好 PyTorch 时很多环境仍可推理 |
+| `WAN_REQUIRE_FLASH_ATTN=1` | 强制要求本机有 CUDA Toolkit（`nvcc`）且 `flash_attn` 安装成功，否则脚本失败 |
+| `WAN_TORCH_INDEX_URL` | 安装 PyTorch 时用官方 CUDA 轮子源，例如 `https://download.pytorch.org/whl/cu124`（与机器 CUDA 对齐） |
+
+---
+
+### pip 安装报错：`flash_attn` / `ModuleNotFoundError: No module named 'torch'`
+
+官方 `requirements.txt` 里的 `flash_attn` 在 **构建 wheel 时会 `import torch`**，而 pip 的**构建隔离环境**里还没有 torch，会出现你看到的错误。
+
+本仓库的 `setup_wan2.1.sh` 已改为：**先装 `torch`/`torchvision` → 再装除 `flash_attn` 外的依赖 → 最后 `pip install flash_attn --no-build-isolation`**。
+
+**没有安装 CUDA Toolkit（没有 `nvcc`）** 时，脚本会 **自动跳过 `flash_attn`** 并完成 venv，无需再设 `WAN_SKIP_FLASH_ATTN`。若你仍想显式跳过：
+
+```bash
+WAN_SKIP_FLASH_ATTN=1 ./scripts/wan2.1/setup_wan2.1.sh venv
+```
+
+若已装 `nvcc` 但未设 `CUDA_HOME`，脚本会尝试根据 `nvcc` 路径自动推断 `CUDA_HOME`。
+
+若 **有 nvcc 但编译仍失败**（gcc/CUDA 与 torch 不匹配等），且不要求必须装 flash_attn，直接重新执行 `./scripts/wan2.1/setup_wan2.1.sh venv` 即可（会自动跳过或你可设 `WAN_SKIP_FLASH_ATTN=1`）。
+
+或先按本机 CUDA 安装带 CUDA 的 PyTorch，再重跑 `venv`：
+
+```bash
+export WAN_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124   # 按你的 CUDA 改 cu118/cu121/cu124
+./scripts/wan2.1/setup_wan2.1.sh venv
+```
 
 ---
 
