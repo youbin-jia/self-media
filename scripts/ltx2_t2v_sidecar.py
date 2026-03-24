@@ -45,6 +45,7 @@ app = FastAPI(title="LTX-2 T2V Sidecar", version="0.2")
 class GenerateBody(BaseModel):
     prompt: str = ""
     narration: str = ""
+    subtitle: str = ""
     duration_sec: float = Field(5.0, ge=0.5, le=120)
     width: int = 1920
     height: int = 1088
@@ -55,9 +56,15 @@ class GenerateBody(BaseModel):
 def _combined_script(body: GenerateBody) -> str:
     p = (body.prompt or "").strip()
     n = (body.narration or "").strip()
-    if p and n:
-        return f"{p}\n\n【口播】{n}"
-    return p or n or "短视频内容"
+    s = (body.subtitle or "").strip()
+    parts: list[str] = []
+    if p:
+        parts.append(p)
+    if s:
+        parts.append(f"【上屏字幕/花字】{s}")
+    if n:
+        parts.append(f"【口播/配音】{n}")
+    return "\n\n".join(parts) if parts else "短视频内容"
 
 
 def _generate_ffmpeg_voiceover(body: GenerateBody, out: Path) -> None:
@@ -226,6 +233,7 @@ def generate(body: GenerateBody):
         env = os.environ.copy()
         env["LTX2_PROMPT"] = body.prompt
         env["LTX2_NARRATION"] = body.narration
+        env["LTX2_SUBTITLE"] = body.subtitle or ""
         env["LTX2_OUT"] = str(out)
         env["LTX2_FRAMES"] = str(body.frames)
         env["LTX2_WIDTH"] = str(body.width)

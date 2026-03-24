@@ -336,7 +336,8 @@ function ProjectWorkflow() {
     try {
       message.loading({ content: loadingText, key: messageKey })
       const payload = {}
-      if (stepName === 'script') {
+      // 未编辑 Prompt 时不要上传草稿：草稿来自旧 llm_input，会覆盖后端默认 prompt 并丢失系统注入段
+      if (stepName === 'script' && promptDirty) {
         if (outlinePromptDraft?.trim()) payload.outline_prompt = outlinePromptDraft.trim()
         if (fullScriptPromptDraft?.trim()) payload.full_script_prompt = fullScriptPromptDraft.trim()
       }
@@ -1434,6 +1435,12 @@ function ProjectWorkflow() {
                   children: (
                     <Space direction="vertical" size={8} style={{ width: '100%' }}>
                       {item.objective ? <Typography.Text strong>{item.objective}</Typography.Text> : null}
+                      {item.narration ? (
+                        <div>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>口播/旁白（建议与 {item.duration_sec ?? '-'}s 匹配）</Typography.Text>
+                          <Paragraph style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{item.narration}</Paragraph>
+                        </div>
+                      ) : null}
                       {item.visual_description ? <Typography.Text>{item.visual_description}</Typography.Text> : null}
                       {item.camera_language ? <Typography.Text type="secondary">机位/运镜：{item.camera_language}</Typography.Text> : null}
                       {item.on_screen_text ? <Typography.Text type="secondary">字幕：{item.on_screen_text}</Typography.Text> : null}
@@ -1936,10 +1943,23 @@ function ProjectWorkflow() {
           }
           const llmSuccessCount = llmInputItems.filter((item) => item.success !== false).length
           const llmFailCount = llmInputItems.filter((item) => item.success === false).length
-          const llmTotalSeconds = llmInputItems.reduce((sum, item) => {
+          const sumDurations = (items) => items.reduce((sum, item) => {
             const sec = Number(item.duration_sec)
             return sum + (Number.isFinite(sec) ? sec : 0)
           }, 0)
+          const llmTotalSeconds = Math.max(sumDurations(llmInputItems), sumDurations(llmCalls))
+          const llmTotalLabel = (() => {
+            if (llmTotalSeconds >= 0.01) {
+              return llmTotalSeconds < 1 ? `${llmTotalSeconds.toFixed(2)}s` : `${Math.round(llmTotalSeconds)}s`
+            }
+            if (llmCalls.length > 0) {
+              return '<0.01s（调用极快或耗时四舍五入；以服务端日志为准）'
+            }
+            if (llmInputItems.some((i) => i.source === 'legacy_fallback')) {
+              return '—（仅「历史兼容输入」快照，无耗时记录）'
+            }
+            return '0s'
+          })()
           const failedHighlight = lastFailedStepKey === step.key
           const failureReason = progressMeta.message || stepData?.output?.error || stepData?.output?.reason
           const hasAnyRunning = !!runningStepKey || workflowSteps.some((s) => {
@@ -2185,8 +2205,31 @@ function ProjectWorkflow() {
                                 <Tag color="blue">阶段数：{llmInputItems.length}</Tag>
                                 <Tag color="success">成功：{llmSuccessCount}</Tag>
                                 <Tag color={llmFailCount > 0 ? 'error' : 'default'}>失败：{llmFailCount}</Tag>
-                                <Tag color="purple">模型总耗时：{Math.round(llmTotalSeconds)}s</Tag>
+                                <Tag color="purple">模型总耗时：{llmTotalLabel}</Tag>
                               </div>
+                              {step.key === 'script' && outputLlmInput?.voiceover_length_policy_zh ? (
+                                <Alert
+                                  type="info"
+                                  showIcon
+                                  style={{ marginBottom: 0 }}
+                                  message="口播/旁白长度要求（本次已写入项目数据，与默认 prompt 一致）"
+                                  description={(
+                                    <pre
+                                      style={{
+                                        margin: '8px 0 0',
+                                        padding: 8,
+                                        background: 'rgba(0,0,0,0.04)',
+                                        borderRadius: 6,
+                                        fontSize: 12,
+                                        whiteSpace: 'pre-wrap',
+                                        wordBreak: 'break-word'
+                                      }}
+                                    >
+                                      {outputLlmInput.voiceover_length_policy_zh}
+                                    </pre>
+                                  )}
+                                />
+                              ) : null}
                               <List
                                 size="small"
                                 dataSource={llmInputItems}
@@ -2195,8 +2238,14 @@ function ProjectWorkflow() {
                                     <Space direction="vertical" size={8} style={{ width: '100%' }}>
                                       <Space wrap>
                                         <Tag color="blue">{getStageLabel(call.stage)}</Tag>
-                                        {call.duration_sec !== undefined ? (
-                                          <Tag color="geekblue">模型耗时 {toIntSeconds(call.duration_sec) ?? 0}s</Tag>
+                                        {call.duration_sec !== undefined && call.duration_sec !== null ? (
+                                          <Tag color="geekblue">
+                                            模型耗时 {
+                                              Number(call.duration_sec) < 1 && Number(call.duration_sec) > 0
+                                                ? `${Number(call.duration_sec).toFixed(3)}`
+                                                : (toIntSeconds(call.duration_sec) ?? 0)
+                                            }s
+                                          </Tag>
                                         ) : null}
                                         {call.success !== undefined ? (
                                           <Tag color={call.success === false ? 'error' : 'success'}>

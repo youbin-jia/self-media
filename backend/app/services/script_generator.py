@@ -1,11 +1,60 @@
 # backend/app/services/script_generator.py
 """Script Generation Service"""
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 from app.services.llm import llm_manager, BaseLLMProvider
 from app.services.quality_detector import QualityDetector, get_quality_detector
 from app.schemas.script import ScriptSegment
 from app.config import settings
+
+# 用户自定义 prompt 中若未包含此锚点，则自动追加大纲口播容量硬约束（与 build_outline_prompt 一致）
+SYS_MARK_OUTLINE_VOICEROVER = "【系统强制·口播字数与时长】"
+# 用户自定义 prompt 中若未包含此锚点，则自动追加完整脚本旁白/时长硬约束
+SYS_MARK_FULL_VOICEROVER = "【系统强制·旁白与镜头时长】"
+
+# 落库 output.llm_input.voiceover_length_policy_zh，与下述注入规则一致
+VOICEROVER_POLICY_SNAPSHOT_ZH = (
+    "【口播/旁白长度（默认 prompt 与「系统强制」注入段已包含，此处为摘要）】\n"
+    "· 中文口播约 4～6 汉字/秒；镜头时长 T 秒时，本镜「旁白」建议 ⌈T×4⌉～⌈T×6⌉ 个汉字（例：20 秒 → 约 80～120 字）。\n"
+    "· 大纲每段须写「口播字数建议：约 A～B 字」（A=⌈秒×4⌉，B=⌈秒×6⌉）。\n"
+    "· 「字幕」仅为上屏花字/关键词，勿复述整段旁白。"
+)
+
+
+def ensure_outline_prompt_includes_voiceover_policy(prompt: str) -> str:
+    """前端可能传入历史落库的 outline_prompt（无口播规则）；追加强制段，保证实际发给模型的文本含约束。"""
+    text = (prompt or "").strip()
+    if not text:
+        return text
+    if SYS_MARK_OUTLINE_VOICEROVER in text:
+        return text
+    return (
+        text
+        + "\n\n---\n"
+        + SYS_MARK_OUTLINE_VOICEROVER
+        + "\n以下为必须遵守的硬约束（与用户上文叠加执行，不可忽略）：\n"
+        "1. 每一信息段除「预计时长（秒）」外，必须另写一行「口播字数建议：约 A～B 字」，"
+        "其中 A=⌈时长秒×4⌉、B=⌈时长秒×6⌉（向上取整）。\n"
+        "2. 中文口播约 4～6 汉字/秒；例：20 秒 → 约 80～120 字；15 秒 → 约 60～90 字；3 秒 → 约 12～18 字。\n"
+        "3. 禁止只写时长却不给口播字数区间。\n"
+    )
+
+
+def ensure_full_script_prompt_includes_voiceover_policy(prompt: str) -> str:
+    text = (prompt or "").strip()
+    if not text:
+        return text
+    if SYS_MARK_FULL_VOICEROVER in text:
+        return text
+    return (
+        text
+        + "\n\n---\n"
+        + SYS_MARK_FULL_VOICEROVER
+        + "\n以下为必须遵守的硬约束（与用户上文叠加执行，不可忽略）：\n"
+        "1. 每个镜头「旁白」为口播全文；镜头时长 T 秒时，旁白汉字总数须落在 ⌈T×4⌉～⌈T×6⌉ 之间。\n"
+        "2. 例：T=20 秒 → 约 80～120 字，绝不允许仅二十余字结束。\n"
+        "3. 「字幕」仅为 4～12 字级花字/关键词，禁止复述整段旁白。\n"
+    )
 
 
 class ScriptGenerator:
@@ -53,6 +102,23 @@ class ScriptGenerator:
 """
         return await self.llm.generate(prompt, max_tokens=4096, temperature=0.2)
 
+    def resolve_outline_prompt(
+        self, topic: str, style: str = "educational", custom_prompt: Optional[str] = None
+    ) -> str:
+        """实际发给大纲模型的完整 prompt（含对用户自定义稿自动注入的口播容量硬约束）。"""
+        if custom_prompt and str(custom_prompt).strip():
+            return ensure_outline_prompt_includes_voiceover_policy(str(custom_prompt).strip())
+        return self.build_outline_prompt(topic=topic, style=style)
+
+    def resolve_full_script_prompt(
+        self, outline: str, topic: str, custom_prompt: Optional[str] = None
+    ) -> str:
+        """实际发给脚本模型的完整 prompt（含对用户自定义稿自动注入的旁白/时长硬约束）。"""
+        if custom_prompt and str(custom_prompt).strip():
+            text = str(custom_prompt).strip().replace("{{OUTLINE}}", outline or "")
+            return ensure_full_script_prompt_includes_voiceover_policy(text)
+        return self.build_full_script_prompt(outline=outline, topic=topic)
+
     async def generate_outline(self, topic: str, style: str = "educational", custom_prompt: str = None) -> str:
         """
         Generate a video script outline based on topic
@@ -64,7 +130,7 @@ class ScriptGenerator:
         Returns:
             Outline text
         """
-        prompt = custom_prompt.strip() if custom_prompt else self.build_outline_prompt(topic=topic, style=style)
+        prompt = self.resolve_outline_prompt(topic, style, custom_prompt)
 
         outline = await self.llm.generate(prompt, max_tokens=2048)
         if self._needs_chinese_rewrite(outline):
@@ -124,6 +190,9 @@ class ScriptGenerator:
 
 【风险与合规提醒】
 - ...
+---
+{SYS_MARK_OUTLINE_VOICEROVER}
+本大纲须满足上文「口播字数建议」规则：A=⌈秒×4⌉、B=⌈秒×6⌉；中文约 4～6 字/秒。（本条为系统校验锚点，模型输出中请保留本标记所在段落）
 """
 
     async def generate_full_script(self, outline: str, topic: str, custom_prompt: str = None) -> Dict[str, Any]:
@@ -137,9 +206,7 @@ class ScriptGenerator:
         Returns:
             Dictionary containing full_script text, segments list, and quality report
         """
-        prompt = custom_prompt.strip() if custom_prompt else self.build_full_script_prompt(outline=outline, topic=topic)
-        if "{{OUTLINE}}" in prompt:
-            prompt = prompt.replace("{{OUTLINE}}", outline or "")
+        prompt = self.resolve_full_script_prompt(outline, topic, custom_prompt)
 
         full_script = await self.llm.generate(prompt, max_tokens=4096)
         if self._needs_chinese_rewrite(full_script):
@@ -228,43 +295,15 @@ class ScriptGenerator:
 - BGM与音效混音建议：
 - 封面标题与前3秒文案建议（至少3套）：
 
-请直接输出脚本正文，不要输出“说明、解释、免责声明”。"""
+请直接输出脚本正文，不要输出“说明、解释、免责声明”。
+---
+{SYS_MARK_FULL_VOICEROVER}
+须满足上文「旁白与镜头时长」匹配规则：每镜旁白汉字数 ⌈T×4⌉～⌈T×6⌉（T 为秒）。（本条为系统校验锚点，模型输出中请保留本标记所在段落）
+"""
 
     def _parse_narration_lines_from_script(self, full_script: str) -> List[str]:
-        """
-        从脚本正文中按行提取旁白/台词，顺序与镜头大致一致。
-        匹配：旁白：、台词：、- 旁白： 等常见模板。
-        """
-        text = str(full_script or "")
-        if not text.strip():
-            return []
-
-        lines_out: List[str] = []
-        # 单行旁白/台词（同一行写完）
-        line_pat = re.compile(
-            r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*([^\n]+)",
-            re.MULTILINE,
-        )
-        for m in line_pat.finditer(text):
-            chunk = m.group(1).strip().strip('"').strip("“”").strip()
-            if len(chunk) > 1 and not chunk.startswith("Segment ") and "placeholder" not in chunk.lower():
-                lines_out.append(chunk)
-
-        if lines_out:
-            return lines_out
-
-        # 多行旁白：「旁白：」下一行起直到空行或下一个字段标题
-        block_pat = re.compile(
-            r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*\n([\s\S]*?)(?=\n\s*(?:[-•\d\.\)\(、]*\s*(?:景别|机位|画面|字幕|音乐|剪辑|导演|镜头)|\n\s*镜头|\Z))",
-            re.MULTILINE,
-        )
-        for m in block_pat.finditer(text):
-            block = m.group(1).strip()
-            block = re.sub(r"\s+", " ", block).strip()
-            if len(block) > 8:
-                lines_out.append(block)
-
-        return lines_out
+        """兼容入口：与模块级 `extract_narration_lines_from_full_script` 一致。"""
+        return extract_narration_lines_from_full_script(full_script)
 
     def _create_segments(self, full_script: str) -> List[ScriptSegment]:
         """
@@ -314,3 +353,99 @@ class ScriptGenerator:
             )
             for text in preview_parts
         ]
+
+
+def _script_execution_section(full_script: str) -> str:
+    """只保留「详细执行脚本」到「后期建议」之间的正文，减少误匹配元数据区。"""
+    text = str(full_script or "")
+    if not text.strip():
+        return ""
+    m0 = re.search(r"【详细执行脚本】\s*", text)
+    if m0:
+        text = text[m0.end() :]
+    m1 = re.search(r"【后期与剪辑建议】", text)
+    if m1:
+        text = text[: m1.start()]
+    return text.strip()
+
+
+# 旁白字段之后到下一分镜字段或下一镜头块为止（与脚本模板字段名一致）
+_STOP_AFTER_NARRATION_IN_SHOT = (
+    r"(?=\n\s*[-–•*、\d\.\)\(]*\s*(?:字幕|景别|机位|画面与动作|画面|音乐|音效|剪辑|导演|时长)\s*[：:]"
+    r"|\n\s*镜头\s*\d+\s*[：:]|\Z)"
+)
+
+
+def _extract_narration_by_shot_blocks(exec_text: str) -> List[str]:
+    """
+    按「镜头N：」块解析，每块取「旁白：」到下一字段之间的内容。
+    与默认脚本模板（build_full_script_prompt）对齐。
+    """
+    if not (exec_text or "").strip():
+        return []
+    lines_out: List[str] = []
+    parts = re.split(r"(?=^镜头\s*\d+\s*[：:])", exec_text, flags=re.MULTILINE)
+    narr_pat = re.compile(
+        r"旁白\s*[：:]\s*([\s\S]+?)" + _STOP_AFTER_NARRATION_IN_SHOT,
+        re.IGNORECASE,
+    )
+    for part in parts:
+        p = part.strip()
+        if not re.match(r"镜头\s*\d+\s*[：:]", p, re.IGNORECASE):
+            continue
+        m = narr_pat.search(p)
+        if not m:
+            continue
+        block = re.sub(r"\s+", " ", m.group(1).strip())
+        block = block.strip('"').strip("“”").strip()
+        if len(block) > 2 and "placeholder" not in block.lower():
+            lines_out.append(block)
+    return lines_out
+
+
+def extract_narration_lines_from_full_script(full_script: str) -> List[str]:
+    """
+    从完整脚本提取每镜口播/旁白正文（顺序与镜头一致），供视觉规划、TTS 分段等使用。
+    优先在「详细执行脚本」区内匹配，跳过【视频定位】等元数据。
+    """
+    text = str(full_script or "")
+    if not text.strip():
+        return []
+
+    exec_text = _script_execution_section(full_script) or text
+    lines_out: List[str] = []
+
+    # 单行旁白/台词（同一行写完）
+    line_pat = re.compile(
+        r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*([^\n]+)",
+        re.MULTILINE,
+    )
+    for m in line_pat.finditer(exec_text):
+        chunk = m.group(1).strip().strip('"').strip("“”").strip()
+        if len(chunk) > 1 and not chunk.startswith("Segment ") and "placeholder" not in chunk.lower():
+            lines_out.append(chunk)
+
+    if lines_out:
+        return lines_out
+
+    # 多行旁白块
+    block_pat = re.compile(
+        r"(?:^|\n)\s*[-•\d\.\)\(、]*\s*(?:旁白|台词|口播)\s*[：:]\s*\n([\s\S]*?)(?=\n\s*(?:[-•\d\.\)\(、]*\s*(?:景别|机位|画面|字幕|音乐|剪辑|导演|镜头)|\n\s*镜头|\Z))",
+        re.MULTILINE,
+    )
+    for m in block_pat.finditer(exec_text):
+        block = m.group(1).strip()
+        block = re.sub(r"\s+", " ", block).strip()
+        if len(block) > 8:
+            lines_out.append(block)
+
+    if lines_out:
+        return lines_out
+
+    # 按「镜头N」块抓取旁白（模板最常见）
+    by_shots = _extract_narration_by_shot_blocks(exec_text)
+    if by_shots:
+        return by_shots
+
+    # 全文再试一次按镜头块（有的模型未写【详细执行脚本】标题）
+    return _extract_narration_by_shot_blocks(text)

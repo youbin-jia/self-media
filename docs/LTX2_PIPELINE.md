@@ -18,10 +18,13 @@
 
 则 **优先** 使用 **LTX-2 文本生成音视频** 管线：**不依赖参考图**，**不调用通义万相 I2V**、**不调用 DALL·E 生图**。
 
-每镜请求体会带上：
+每镜请求体会带上（与 **视觉规划** `metadata.visual_plan.shots` **一一对应**，按 `shot_no` 排序后再逐镜请求）：
 
-- **画面/镜头提示**：来自分镜字段（`visual_description`、`on_screen_text` 等）；
-- **口播/独白**：来自当前项目 **脚本的 `segments[].text`**（按分镜序号循环对齐）；若无分段则退回 `full_script` 按段落切分。
+- **`prompt`**：结构化 LTX2 文档式描述——画面与动作、景别/运镜、上屏花字要点、叙事目标等（完整口播不重复堆进 prompt，避免超长）；
+- **`narration`**：**本镜口播/配音正文**，优先来自视觉规划该镜的 `narration`，缺省再按脚本 `segments` / `full_script` 补位；
+- **`subtitle`**：来自分镜 `on_screen_text`（花字/关键词），侧车可与口播一并写入 TTS 文本或供 Comfy 工作流使用。
+
+合成结束后，项目元数据 `video.ltx2_input_document` 会保存 **整支视频的 Markdown 分镜总表**（每节 = 一镜：画面 / 花字 / 口播），便于核对与二次编辑。
 
 生成结果在 `data/ltx2_t2v_cache/<project_id>/` 缓存为 MP4，再由现有 **MoviePy 时间轴** 拼接。
 
@@ -51,6 +54,7 @@
 {
   "prompt": "画面与镜头描述…",
   "narration": "本镜口播文案…",
+  "subtitle": "上屏花字关键词…",
   "duration_sec": 6.0,
   "width": 1920,
   "height": 1088,
@@ -58,6 +62,8 @@
   "frames": 121
 }
 ```
+
+`subtitle` 可选；未传时侧车仅使用 `prompt` 与 `narration`。自定义 `LTX2_T2V_SHELL` 时可读环境变量 `LTX2_SUBTITLE`。
 
 `frames` 由主服务按 **8n+1** 规则根据 `duration_sec` 与 `fps` 计算。
 

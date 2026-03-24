@@ -58,25 +58,33 @@ export function LtxShotBoardPanel({
       ) : null}
       <Space direction="vertical" size={10} style={{ width: '100%' }}>
         {shots.map((row, i) => {
-          const st = shotStatusMeta(row.status)
+          const statusMeta = shotStatusMeta(row.status)
           const sn = row.shot_no != null ? row.shot_no : i + 1
           const pt = String(row.prompt || '').trim()
           const nt = String(row.narration || '').trim()
+          const subtitleText = String(row.subtitle || '').trim()
+          const blk = String(row.ltx_input_block || '').trim()
           let inputBody = ''
-          if (pt) inputBody = pt
-          if (pt && nt) inputBody += `\n\n【口播】${nt}`
-          else if (!pt && nt) inputBody = `【口播】${nt}`
-          if (!inputBody) inputBody = '—'
+          if (blk) {
+            inputBody = blk
+          } else {
+            if (pt) inputBody = pt
+            if (subtitleText) {
+              inputBody += `${inputBody ? '\n\n' : ''}【上屏字幕】${subtitleText}`
+            }
+            if (nt) inputBody += `${inputBody ? '\n\n' : ''}【口播】${nt}`
+            if (!inputBody) inputBody = '—'
+          }
           return (
             <Card key={`ltx-${row.shot_index ?? i}-${sn}`} size="small" type="inner">
               <Space wrap style={{ marginBottom: 8 }}>
                 <Tag color="blue">镜头 {sn}</Tag>
-                <Tag color={st.color}>{st.text}</Tag>
+                <Tag color={statusMeta.color}>{statusMeta.text}</Tag>
                 {row.status === 'generating' ? <Spin size="small" /> : null}
               </Space>
               <Row gutter={[12, 8]}>
                 <Col xs={24} md={12}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>模型输入（提示词 / 口播）</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>LTX 输入（与视觉规划同镜对齐）</Text>
                   <pre
                     style={{
                       margin: '6px 0 0',
@@ -84,7 +92,7 @@ export function LtxShotBoardPanel({
                       borderRadius: 6,
                       background: '#f5f5f5',
                       fontSize: 11,
-                      maxHeight: 160,
+                      maxHeight: blk ? 240 : 160,
                       overflow: 'auto',
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-word'

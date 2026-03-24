@@ -40,6 +40,7 @@ async def generate_ltx2_t2v_clip_async(
     *,
     prompt: str,
     narration: str = "",
+    subtitle: str = "",
     duration_sec: float,
     cache_dir: Path,
     stem: str,
@@ -69,6 +70,7 @@ async def generate_ltx2_t2v_clip_async(
     payload: Dict[str, Any] = {
         "prompt": (prompt or "").strip(),
         "narration": (narration or "").strip(),
+        "subtitle": (subtitle or "").strip(),
         "duration_sec": float(duration_sec),
         "width": w,
         "height": h,

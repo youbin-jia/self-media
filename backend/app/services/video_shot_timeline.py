@@ -170,9 +170,94 @@ def visual_shots_from_project_meta(project_meta: dict) -> List[dict]:
     return []
 
 
+def _shot_no_for_sort(shot: dict, list_index: int) -> int:
+    try:
+        sn = int(shot.get("shot_no") or 0)
+        return sn if sn > 0 else list_index + 1
+    except (TypeError, ValueError):
+        return list_index + 1
+
+
+def align_visual_shots_with_narrations(
+    shots: List[dict], narrations: List[str]
+) -> Tuple[List[dict], List[str]]:
+    """
+    按视觉规划 shot_no 排序，并与口播列表按下标对齐。
+    视频合成第 i 个片段与视觉规划「镜头 shot_no」顺序一致。
+    """
+    n = len(shots)
+    if n == 0:
+        return [], []
+    narr = list(narrations or []) + [""] * n
+    narr = narr[:n]
+    triples = [(i, shots[i], narr[i]) for i in range(n)]
+    triples.sort(key=lambda t: (_shot_no_for_sort(t[1], t[0]), t[0]))
+    return [t[1] for t in triples], [t[2] for t in triples]
+
+
+def build_ltx2_shot_input_block(
+    shot: dict, shot_index: int, narration_line: str
+) -> str:
+    """
+    单镜 LTX2.0 输入文档块（与 POST /generate 的 prompt+narration+subtitle 语义对齐）。
+    便于落库、排错与人工核对。
+    """
+    sn = shot.get("shot_no", shot_index + 1)
+    dur = float(shot.get("duration_sec") or 5)
+    vd = str(shot.get("visual_description") or "").strip()
+    cam = str(shot.get("camera_language") or "").strip()
+    ost = str(shot.get("on_screen_text") or "").strip()
+    obj = str(shot.get("objective") or "").strip()
+    nar = str(narration_line or "").strip()
+    lines = [
+        f"### 镜头 {sn}（时间轴第 {shot_index + 1} 段，约 {dur:.1f}s）",
+        "",
+        "【画面与动作】",
+        vd or "（未填，由模型推断信息清晰画面）",
+        "",
+    ]
+    if cam:
+        lines.extend(["【景别/运镜】", cam, ""])
+    if obj:
+        lines.extend(["【叙事目标】", obj, ""])
+    lines.extend(
+        [
+            "【上屏字幕/花字】",
+            ost or "（无单独花字，以口播为主）",
+            "",
+            "【口播/配音正文】",
+            nar or "（空，请检查视觉规划 narration 或脚本分段）",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_ltx2_full_input_document(
+    shots: List[dict], narrations: List[str]
+) -> str:
+    """整支视频的 LTX2 输入总表：与视觉规划镜头一一对应。"""
+    header = (
+        "# LTX2 分镜输入总表\n\n"
+        "说明：以下每一节对应视觉规划中的一个镜头；"
+        "「口播/配音正文」会作为侧车 `narration` 字段提交；"
+        "「画面与动作」等与花字合并为侧车 `prompt`；花字另传 `subtitle`。\n\n"
+    )
+    blocks: List[str] = []
+    for idx, shot in enumerate(shots):
+        narr = narrations[idx] if idx < len(narrations) else ""
+        blocks.append(build_ltx2_shot_input_block(shot, idx, narr))
+    return header + "\n".join(blocks)
+
+
 def shot_to_image_prompt(shot: dict, *, shot_index: int = 0) -> str:
     """用分镜的文案字段拼图像/视频生成提示词。"""
     parts: List[str] = []
+    nar = str(shot.get("narration") or shot.get("voiceover") or "").strip()
+    if nar:
+        parts.append(f"口播对白参考：{nar[:900]}")
     vd = str(shot.get("visual_description") or "").strip()
     if vd:
         parts.append(vd)
@@ -205,26 +290,86 @@ def ai_image_generation_available() -> bool:
         return False
 
 
-def shot_to_ltx2_prompt(shot: dict, *, shot_index: int = 0) -> str:
-    """LTX-2 文本生成视频：在分镜描述基础上强调音画、对白。"""
-    base = shot_to_image_prompt(shot, shot_index=shot_index)
+def shot_to_ltx2_prompt(
+    shot: dict,
+    *,
+    shot_index: int = 0,
+    narration_line: Optional[str] = None,
+    subtitle_line: Optional[str] = None,
+) -> str:
+    """
+    LTX-2 文本生成视频：结构化文档式 prompt（画面/花字/叙事），
+    完整口播由侧车 narration 字段单独提交，避免与画面描述重复堆叠。
+    """
+    sn = shot.get("shot_no", shot_index + 1)
+    dur = float(shot.get("duration_sec") or 5)
+    vd = str(shot.get("visual_description") or "").strip()
+    cam = str(shot.get("camera_language") or "").strip()
+    ost = (subtitle_line if subtitle_line is not None else "").strip() or str(
+        shot.get("on_screen_text") or ""
+    ).strip()
+    obj = str(shot.get("objective") or "").strip()
+    ms = shot.get("material_suggestion") or []
+    ms_txt = ""
+    if isinstance(ms, list) and ms:
+        ms_txt = "，".join(str(x) for x in ms[:4] if str(x).strip())
+
+    nar = str(narration_line or shot.get("narration") or shot.get("voiceover") or "").strip()
+    nar_hint = nar[:200] + ("…" if len(nar) > 200 else "") if nar else ""
+
+    lines: List[str] = [
+        f"【LTX2·镜头{sn}】时长约{dur:.1f}秒",
+        "【画面与动作】" + (vd or "短视频信息画面，主体清晰"),
+    ]
+    if cam:
+        lines.append("【景别/运镜】" + cam)
+    if ost:
+        lines.append(
+            "【上屏字幕/花字】"
+            + ost
+            + "（短关键词；完整配音以口播字段为准，请口型与语气一致）"
+        )
+    if obj:
+        lines.append("【叙事目标】" + obj)
+    if ms_txt:
+        lines.append("【素材参考】" + ms_txt)
+    if nar_hint:
+        lines.append("【对白要点摘要】" + nar_hint)
+
     if shot_index == 0:
-        extra = (
-            " 本镜头生成带同步对白的短视频片段；说话内容与下方口播文案一致，"
-            "自然语气，环境音合理，画面无角标水印。"
+        lines.append(
+            "【生成要求】带同步对白的竖屏/横屏短视频片段；自然语气，环境音合理；画面无角标水印。"
         )
     else:
-        extra = " 与口播同步对白，语气自然，环境音合理，无角标水印。"
-    return (base + extra)[:2400]
+        lines.append("【生成要求】与口播同步对白；语气自然；无角标水印。")
+
+    return "\n".join(lines)[:2400]
 
 
-def narration_lines_for_shots(db: "Session", project_id: str, num_shots: int) -> List[str]:
-    """按脚本分段与分镜数量对齐，供 LTX 侧车作为口播/独白。"""
+def narration_lines_for_shots(
+    db: "Session",
+    project_id: str,
+    num_shots: int,
+    visual_shots: Optional[List[dict]] = None,
+) -> List[str]:
+    """供 LTX 侧车口播：优先使用视觉规划每镜的 narration，缺省再按脚本 segments 轮转。"""
     from app.models.script import Script
 
-    lines: List[str] = [""] * max(0, int(num_shots))
-    if num_shots <= 0:
+    n = max(0, int(num_shots))
+    lines: List[str] = [""] * n
+    if n <= 0:
         return lines
+
+    if visual_shots:
+        for i in range(min(n, len(visual_shots))):
+            row = visual_shots[i] if isinstance(visual_shots[i], dict) else {}
+            narr = str(
+                row.get("narration") or row.get("voiceover") or row.get("narration_script") or ""
+            ).strip()
+            if narr:
+                lines[i] = narr
+        if all(str(x or "").strip() for x in lines):
+            return lines
 
     script = (
         db.query(Script)
@@ -254,8 +399,9 @@ def narration_lines_for_shots(db: "Session", project_id: str, num_shots: int) ->
     if not texts:
         return lines
 
-    for i in range(num_shots):
-        lines[i] = texts[i % len(texts)]
+    for i in range(n):
+        if not str(lines[i] or "").strip():
+            lines[i] = texts[i % len(texts)]
     return lines
 
 
@@ -271,8 +417,12 @@ async def build_ltx2_text_shot_timeline(
     """
     无参考图：按分镜调用 LTX-2 侧车文本生成音视频，再拼接。
     不调用 DALL·E 生图；与 Wan I2V 素材链路无关。
+
+    与视觉规划 1:1：按 shot_no 与口播列表对齐后再逐镜请求侧车。
     """
     from app.services.ltx2_video import generate_ltx2_t2v_clip_async
+
+    shots, narrations = align_visual_shots_with_narrations(list(shots or []), list(narrations or []))
 
     stats: Dict[str, Any] = {
         "from_material": 0,
@@ -287,6 +437,7 @@ async def build_ltx2_text_shot_timeline(
 
     ltx_shot_board_final: List[Dict[str, Any]] = []
     total = len(shots)
+    ltx_doc_full = build_ltx2_full_input_document(shots, narrations)
     w = int(getattr(settings, "LTX2_T2V_WIDTH", 1920) or 1920)
     h = int(getattr(settings, "LTX2_T2V_HEIGHT", 1088) or 1088)
     fps = int(getattr(settings, "LTX2_T2V_FPS", 24) or 24)
@@ -295,10 +446,17 @@ async def build_ltx2_text_shot_timeline(
         dur = float(shot.get("duration_sec") or 5)
         dur = max(0.5, min(120.0, dur))
         sn = shot.get("shot_no", idx + 1)
-        prompt = shot_to_ltx2_prompt(shot, shot_index=idx)
         narr = ""
         if idx < len(narrations):
             narr = str(narrations[idx] or "").strip()
+        subtitle = str(shot.get("on_screen_text") or "").strip()
+        shot_block = build_ltx2_shot_input_block(shot, idx, narr)
+        prompt = shot_to_ltx2_prompt(
+            shot,
+            shot_index=idx,
+            narration_line=narr,
+            subtitle_line=subtitle,
+        )
 
         if on_shot_progress:
             await on_shot_progress(
@@ -316,6 +474,8 @@ async def build_ltx2_text_shot_timeline(
                     "total": total,
                     "prompt": prompt,
                     "narration": narr,
+                    "subtitle": subtitle,
+                    "ltx_input_block": shot_block,
                     "duration_sec": dur,
                 }
             )
@@ -329,6 +489,7 @@ async def build_ltx2_text_shot_timeline(
         vp = await generate_ltx2_t2v_clip_async(
             prompt=prompt,
             narration=narr,
+            subtitle=subtitle,
             duration_sec=dur,
             cache_dir=cache_dir,
             stem=stem,
@@ -364,6 +525,8 @@ async def build_ltx2_text_shot_timeline(
                     "status": "done",
                     "prompt": prompt,
                     "narration": narr,
+                    "subtitle": subtitle,
+                    "ltx_input_block": shot_block,
                     "duration_sec": dur,
                     "output_path": vp,
                     "size_kb": sz // 1024,
@@ -397,6 +560,8 @@ async def build_ltx2_text_shot_timeline(
                 "status": "placeholder",
                 "prompt": prompt,
                 "narration": narr,
+                "subtitle": subtitle,
+                "ltx_input_block": shot_block,
                 "duration_sec": dur,
                 "output_path": None,
                 "size_kb": None,
@@ -422,6 +587,8 @@ async def build_ltx2_text_shot_timeline(
         ),
         "wan_i2v_skipped": True,
         "hints": hints,
+        "visual_shots_aligned": total,
+        "ltx2_input_document": ltx_doc_full,
     }
     return timeline, stats, ltx_shot_board_final
 
@@ -439,6 +606,7 @@ async def build_visual_shot_timeline(
     - 素材为图或 DALL·E 出图：若启用 Wan I2V，优先生成短视频；否则静态图。
     - 无图：占位。
     """
+    shots, _ = align_visual_shots_with_narrations(list(shots or []), [])
     stats = {
         "from_material": 0,
         "generated": 0,

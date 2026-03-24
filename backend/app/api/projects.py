@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel
 from datetime import datetime
@@ -22,7 +23,7 @@ from app.schemas.script import ScriptSegment
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.services.script_generator import ScriptGenerator
+from app.services.script_generator import ScriptGenerator, VOICEROVER_POLICY_SNAPSHOT_ZH
 from app.services.quality_detector import get_quality_detector
 from app.services.visual_planner import VisualPlanner
 from app.services.tts import tts_manager
@@ -44,7 +45,6 @@ WORKFLOW_STEPS = ["script", "review", "visual", "audio", "video"]
 OUTLINE_LLM_TIMEOUT_SEC = 90
 FULL_SCRIPT_LLM_TIMEOUT_SEC = 150
 STEP_ACTIVITY_LOG_MAX = 400
-
 
 def _ensure_script_history_table(db: Session) -> None:
     """Ensure script history table exists for old databases without migration."""
@@ -366,6 +366,8 @@ def _set_step_progress(
     metadata["steps"] = steps
     project.current_step = step_name
     project.project_metadata = metadata
+    # JSON 列若始终赋同一 dict 引用，部分情况下 ORM 可能不标记脏数据，导致 progress.llm_calls 等未持久化
+    flag_modified(project, "project_metadata")
     db.commit()
 
 
@@ -403,6 +405,8 @@ def _merge_ltx_shot_board(project_id: str, step_name: str, detail: dict) -> None
             row["status"] = "generating"
             row["prompt"] = str(detail.get("prompt") or "")[:12000]
             row["narration"] = str(detail.get("narration") or "")[:12000]
+            row["subtitle"] = str(detail.get("subtitle") or "")[:800]
+            row["ltx_input_block"] = str(detail.get("ltx_input_block") or "")[:12000]
             row["duration_sec"] = detail.get("duration_sec")
             row.pop("output_path", None)
             row.pop("size_kb", None)
@@ -892,7 +896,14 @@ async def execute_project_step(
         if step_name == "script":
             topic = project.topic_title or project.title
             generator = ScriptGenerator()
-            outline_prompt = request.outline_prompt.strip() if request and request.outline_prompt else generator.build_outline_prompt(topic=topic)
+            outline_cp = None
+            if request and request.outline_prompt and str(request.outline_prompt).strip():
+                outline_cp = str(request.outline_prompt).strip()
+            full_cp = None
+            if request and request.full_script_prompt and str(request.full_script_prompt).strip():
+                full_cp = str(request.full_script_prompt).strip()
+            outline_prompt_used = generator.resolve_outline_prompt(topic, "educational", outline_cp)
+            full_script_prompt_used: Optional[str] = None
             try:
                 _set_step_progress(
                     project,
@@ -907,10 +918,10 @@ async def execute_project_step(
                 outline_llm_start = time.perf_counter()
                 try:
                     outline = await asyncio.wait_for(
-                        generator.generate_outline(topic, custom_prompt=outline_prompt),
+                        generator.generate_outline(topic, custom_prompt=outline_cp),
                         timeout=OUTLINE_LLM_TIMEOUT_SEC
                     )
-                    outline_llm_duration = round(time.perf_counter() - outline_llm_start, 2)
+                    outline_llm_duration = round(time.perf_counter() - outline_llm_start, 3)
                     _set_step_progress(
                         project,
                         metadata,
@@ -921,11 +932,11 @@ async def execute_project_step(
                             "provider": generator.provider_name,
                             "duration_sec": outline_llm_duration,
                             "success": True,
-                            "input": outline_prompt
+                            "input": outline_prompt_used
                         }
                     )
                 except Exception as outline_exc:
-                    outline_llm_duration = round(time.perf_counter() - outline_llm_start, 2)
+                    outline_llm_duration = round(time.perf_counter() - outline_llm_start, 3)
                     _set_step_progress(
                         project,
                         metadata,
@@ -937,7 +948,7 @@ async def execute_project_step(
                             "duration_sec": outline_llm_duration,
                             "success": False,
                             "error": str(outline_exc),
-                            "input": outline_prompt
+                            "input": outline_prompt_used
                         }
                     )
                     raise
@@ -952,11 +963,7 @@ async def execute_project_step(
                     stage="outline_done",
                     message="大纲已生成，正在构建完整脚本"
                 )
-                full_script_prompt = (
-                    request.full_script_prompt.strip()
-                    if request and request.full_script_prompt
-                    else generator.build_full_script_prompt(outline=outline, topic=topic)
-                )
+                full_script_prompt_used = generator.resolve_full_script_prompt(outline, topic, full_cp)
 
                 _set_step_progress(
                     project,
@@ -971,10 +978,10 @@ async def execute_project_step(
                 full_script_llm_start = time.perf_counter()
                 try:
                     full_result = await asyncio.wait_for(
-                        generator.generate_full_script(outline, topic, custom_prompt=full_script_prompt),
+                        generator.generate_full_script(outline, topic, custom_prompt=full_cp),
                         timeout=FULL_SCRIPT_LLM_TIMEOUT_SEC
                     )
-                    full_script_llm_duration = round(time.perf_counter() - full_script_llm_start, 2)
+                    full_script_llm_duration = round(time.perf_counter() - full_script_llm_start, 3)
                     _set_step_progress(
                         project,
                         metadata,
@@ -985,11 +992,11 @@ async def execute_project_step(
                             "provider": generator.provider_name,
                             "duration_sec": full_script_llm_duration,
                             "success": True,
-                            "input": full_script_prompt
+                            "input": full_script_prompt_used
                         }
                     )
                 except Exception as full_script_exc:
-                    full_script_llm_duration = round(time.perf_counter() - full_script_llm_start, 2)
+                    full_script_llm_duration = round(time.perf_counter() - full_script_llm_start, 3)
                     _set_step_progress(
                         project,
                         metadata,
@@ -1001,7 +1008,7 @@ async def execute_project_step(
                             "duration_sec": full_script_llm_duration,
                             "success": False,
                             "error": str(full_script_exc),
-                            "input": full_script_prompt
+                            "input": full_script_prompt_used
                         }
                     )
                     raise
@@ -1040,8 +1047,9 @@ async def execute_project_step(
                 output = {
                     "topic": topic,
                     "llm_input": {
-                        "outline_prompt": outline_prompt,
-                        "full_script_prompt": full_script_prompt
+                        "outline_prompt": outline_prompt_used,
+                        "full_script_prompt": full_script_prompt_used,
+                        "voiceover_length_policy_zh": VOICEROVER_POLICY_SNAPSHOT_ZH,
                     },
                     "outline": outline,
                     "full_script": full_script,
@@ -1062,10 +1070,10 @@ async def execute_project_step(
                     message="模型调用失败，正在生成离线占位结果"
                 )
                 outline = f"1. 开场引入：{topic}\n2. 核心观点展开\n3. 结尾总结与互动引导"
-                full_script_prompt = (
-                    request.full_script_prompt.strip()
-                    if request and request.full_script_prompt
-                    else generator.build_full_script_prompt(outline=outline, topic=topic)
+                full_script_prompt_fallback = (
+                    full_script_prompt_used
+                    if full_script_prompt_used is not None
+                    else generator.resolve_full_script_prompt(outline, topic, full_cp)
                 )
                 full_script = (
                     f"大家好，今天我们聊聊「{topic}」。\n"
@@ -1093,8 +1101,9 @@ async def execute_project_step(
                 output = {
                     "topic": topic,
                     "llm_input": {
-                        "outline_prompt": outline_prompt,
-                        "full_script_prompt": full_script_prompt
+                        "outline_prompt": outline_prompt_used,
+                        "full_script_prompt": full_script_prompt_fallback,
+                        "voiceover_length_policy_zh": VOICEROVER_POLICY_SNAPSHOT_ZH,
                     },
                     "outline": outline,
                     "full_script": full_script,
@@ -1399,7 +1408,9 @@ async def execute_project_step(
                             f"素材条目 {len(materials)}；分镜 {len(shots)}；进入 LTX-2 分镜生成",
                         ],
                     )
-                    narrations = narration_lines_for_shots(db, project_id, len(shots))
+                    narrations = narration_lines_for_shots(
+                        db, project_id, len(shots), visual_shots=shots
+                    )
                     timeline, shot_stats, ltx_shot_board = await build_ltx2_text_shot_timeline(
                         shots,
                         narrations,
@@ -1504,6 +1515,11 @@ async def execute_project_step(
                 log_append=f"写入项目元数据，成片路径已确定",
             )
             video_info = synthesizer.get_video_info(str(final_video_path))
+            ltx2_doc = ""
+            if use_ltx2_t2v and isinstance(shot_stats, dict):
+                ltx2_doc = str(
+                    (shot_stats.get("diagnostics") or {}).get("ltx2_input_document") or ""
+                )[:120000]
             project_meta["video_path"] = str(final_video_path)
             project_meta["video"] = {
                 "path": str(final_video_path),
@@ -1519,6 +1535,7 @@ async def execute_project_step(
                 "shot_timeline_stats": shot_stats,
                 "ltx2_t2v": use_ltx2_t2v,
                 "ltx_shot_board": ltx_shot_board if use_ltx2_t2v else [],
+                "ltx2_input_document": ltx2_doc,
                 "ltx2_skip_external_tts": bool(
                     use_ltx2_t2v and getattr(settings, "LTX2_T2V_SKIP_EXTERNAL_TTS", True)
                 ),
@@ -1537,6 +1554,7 @@ async def execute_project_step(
                 "shots_used": len(shots) if shots else 0,
                 "shot_timeline_stats": shot_stats,
                 "ltx_shot_board": ltx_shot_board if use_ltx2_t2v else [],
+                "ltx2_input_document": ltx2_doc,
                 "message": "视频合成完成"
             }
         else:
