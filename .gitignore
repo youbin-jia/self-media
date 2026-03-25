@@ -71,6 +71,11 @@ build/
 .npm
 .eslintcache
 
+# DailyHotApi service
+services/dailyhot-api/node_modules/
+services/dailyhot-api/logs/
+services/dailyhot-api/.env
+
 # Coverage reports
 htmlcov/
 .coverage

@@ -77,8 +77,11 @@ services:
     restart: unless-stopped
 
   # DailyHotApi - 热榜数据聚合服务
+  # 使用本地源码构建，避免网络问题
   dailyhot-api:
-    image: imsyy/dailyhot-api:latest
+    build:
+      context: ./services/dailyhot-api
+      dockerfile: Dockerfile
     container_name: self-media-dailyhot
     ports:
       - "6688:6688"
