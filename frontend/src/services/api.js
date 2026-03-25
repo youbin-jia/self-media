@@ -7,7 +7,12 @@ const api = axios.create({
 
 // Topics
 export const getTopics = (params) => api.get('/topics/list', { params })
-export const refreshTopics = () => api.post('/topics/refresh')
+export const refreshTopics = (platform) => api.post('/topics/refresh', null, {
+  params: platform ? { platform } : {},
+  timeout: 120000  // 2 minutes for fetching multiple platforms
+})
+export const getTopicPlatforms = () => api.get('/topics/platforms')
+export const getTopicStats = () => api.get('/topics/stats')
 
 // Projects
 export const getProjects = () => api.get('/projects/')

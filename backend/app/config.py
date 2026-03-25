@@ -115,6 +115,23 @@ class Settings(BaseSettings):
     CACHE_TTL_SEARCH: int = 3600        # 1 hour
     CACHE_TTL_DASHBOARD: int = 900      # 15 minutes
 
+    # Hot Topic Fetcher (DailyHotApi)
+    DAILYHOT_API_URL: str = "http://localhost:6688"  # Use "http://dailyhot-api:6688" in Docker
+    DAILYHOT_API_TIMEOUT: int = 30  # seconds
+    TOPIC_FETCH_INTERVAL: int = 60  # minutes
+    # Platforms to fetch (comma-separated, empty = all)
+    TOPIC_PLATFORMS: str = "weibo,xiaohongshu,douyin,bilibili,zhihu,baidu,toutiao,kuaishou"
+
+    @field_validator("DAILYHOT_API_URL")
+    @classmethod
+    def validate_dailyhot_url(cls, v: str, info) -> str:
+        """Use Docker service name when running in Docker environment."""
+        environment = info.data.get("ENVIRONMENT", "development")
+        # In Docker, use the service name instead of localhost
+        if environment == "production" and "localhost" in v:
+            return v.replace("localhost", "dailyhot-api")
+        return v
+
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int = 4
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1

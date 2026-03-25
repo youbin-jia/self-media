@@ -9,6 +9,7 @@ from app.models.batch import BatchJob, BatchStatus, BatchPriority
 from app.models.user import User, UserRole
 from app.models.plugin import Plugin, PluginConfiguration
 from app.models.webhook import Webhook, WebhookDelivery
+from app.models.topic import Topic
 
 __all__ = [
     "Project",
@@ -26,4 +27,5 @@ __all__ = [
     "PluginConfiguration",
     "Webhook",
     "WebhookDelivery",
+    "Topic",
 ]

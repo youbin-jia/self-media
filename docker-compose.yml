@@ -76,5 +76,18 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # DailyHotApi - 热榜数据聚合服务
+  dailyhot-api:
+    image: imsyy/dailyhot-api:latest
+    container_name: self-media-dailyhot
+    ports:
+      - "6688:6688"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6688/weibo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   redis_data:

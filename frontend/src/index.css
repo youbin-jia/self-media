@@ -161,6 +161,32 @@ code {
   font-size: 18px;
 }
 
+.topic-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.topic-tabs-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.topic-tabs-wrap .ant-tabs {
+  margin-bottom: 0 !important;
+}
+
+.topic-tabs-wrap .ant-tabs-nav {
+  margin-bottom: 0 !important;
+}
+
+.topic-actions {
+  flex-shrink: 0;
+}
+
 .cta-btn {
   box-shadow: 0 10px 20px rgba(109, 94, 245, 0.26);
 }
@@ -174,6 +200,15 @@ code {
   border: 1px solid rgba(109, 94, 245, 0.14) !important;
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.topic-card .ant-card-meta-title {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  line-height: 1.5;
 }
 
 .topic-card:hover {
@@ -557,6 +592,21 @@ code {
   .hero-main {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .topic-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topic-tabs-wrap {
+    order: 2;
+  }
+
+  .topic-actions {
+    order: 1;
+    justify-content: flex-start;
+    margin-bottom: 8px;
   }
 
   .projects-layout {

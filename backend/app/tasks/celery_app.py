@@ -1,6 +1,7 @@
 # backend/app/tasks/celery_app.py
 """Celery Application Configuration"""
 from celery import Celery
+from celery.schedules import crontab
 from kombu import Queue, Exchange
 
 from app.config import settings
@@ -10,7 +11,7 @@ celery_app = Celery(
     "video_automation",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.video_tasks", "app.tasks.batch_tasks"]
+    include=["app.tasks.video_tasks", "app.tasks.batch_tasks", "app.tasks.topic_tasks"]
 )
 
 # Define task queues with priorities
@@ -34,13 +35,41 @@ task_routes = {
         'queue': 'high',
         'priority': 8,
     },
-    # Medium priority queue - Material collection, webhooks, monitoring
+    # Medium priority queue - Material collection, webhooks, monitoring, topics
     'app.tasks.batch_tasks.monitor_batch_progress_task': {
         'queue': 'medium',
         'priority': 4,
     },
-    # Low priority queue - Cleanup tasks (future)
-    # 'app.tasks.cleanup.*': {'queue': 'low', 'priority': 1},
+    'app.tasks.topic_tasks.fetch_all_topics_task': {
+        'queue': 'medium',
+        'priority': 5,
+    },
+    'app.tasks.topic_tasks.fetch_platform_topics_task': {
+        'queue': 'medium',
+        'priority': 5,
+    },
+    # Low priority queue - Cleanup tasks
+    'app.tasks.topic_tasks.cleanup_old_topics_task': {
+        'queue': 'low',
+        'priority': 1,
+    },
+}
+
+# Celery Beat schedule for periodic tasks
+beat_schedule = {
+    # Fetch hot topics every hour
+    'fetch-topics-hourly': {
+        'task': 'app.tasks.topic_tasks.fetch_all_topics_task',
+        'schedule': crontab(minute=0),  # Run at the start of every hour
+        'options': {'queue': 'medium'},
+    },
+    # Cleanup old topics daily at 3 AM
+    'cleanup-topics-daily': {
+        'task': 'app.tasks.topic_tasks.cleanup_old_topics_task',
+        'schedule': crontab(hour=3, minute=0),
+        'kwargs': {'days': 7},
+        'options': {'queue': 'low'},
+    },
 }
 
 # Celery configuration
@@ -76,4 +105,7 @@ celery_app.conf.update(
 
     # Task routing
     task_routes=task_routes,
+
+    # Beat schedule for periodic tasks
+    beat_schedule=beat_schedule,
 )
